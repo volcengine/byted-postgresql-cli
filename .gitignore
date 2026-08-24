@@ -1,0 +1,20 @@
+# Compiled Go binaries
+/bin/byted-postgresql-cli
+.env
+/test/script/
+supabase/
+.DS_Store
+.tmp/
+/scripts/
+/bin/
+/genparams
+/tools/genparams/genparams
+
+# Cross-platform release artifacts
+/dist/
+
+# Test output
+/test-results/
+
+# Node
+/node_modules/

@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+package cli
+
+import (
+	"testing"
+
+	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
+)
+
+func TestSummarizeProjects(t *testing.T) {
+	got := summarizeProjects([]volcengine.Workspace{
+		{ProjectName: "gongna"},
+		{ProjectName: "default"},
+		{ProjectName: "gongna"},
+		{ProjectName: ""},
+	})
+	if len(got) != 2 {
+		t.Fatalf("summarizeProjects() returned %d projects, want 2", len(got))
+	}
+	if got[0].ProjectName != "default" || got[0].WorkspaceCount != 1 {
+		t.Fatalf("first project = %+v, want default/1", got[0])
+	}
+	if got[1].ProjectName != "gongna" || got[1].WorkspaceCount != 2 {
+		t.Fatalf("second project = %+v, want gongna/2", got[1])
+	}
+}
+
+func TestProjectsListIsRegistered(t *testing.T) {
+	cmd := newRootCmd()
+	found, _, err := cmd.Find([]string{"projects", "list"})
+	if err != nil || found == nil {
+		t.Fatalf("projects list is not registered: %v", err)
+	}
+}

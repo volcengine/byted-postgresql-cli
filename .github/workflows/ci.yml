@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - feat/**
+      - fix/**
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          test -z "$(gofmt -l cmd internal main.go)"
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test ./... -coverprofile=coverage.out
+
+      - name: Run replay E2E tests
+        run: make test-e2e-replay
+
+      - name: Show coverage
+        run: go tool cover -func=coverage.out
+
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/byted-postgresql-cli .
+
+  npm:
+    name: npm checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run npm tests
+        run: npm run test:npm
