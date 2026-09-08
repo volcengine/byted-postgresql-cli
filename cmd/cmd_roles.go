@@ -23,6 +23,8 @@ package cli
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
@@ -41,8 +43,6 @@ func newRolesCmd(ctx ProviderContext) *cobra.Command {
 	}
 
 	var workspaceID, branchID string
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID the branch belongs to")
-	cmd.PersistentFlags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
 
 	resolve := func(cmd *cobra.Command) (*volcengine.Client, string, string, error) {
 		g := fromCtx(cmd)
@@ -66,6 +66,7 @@ func newRolesCmd(ctx ProviderContext) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List roles",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, wsID, bid, err := resolve(cmd)
@@ -90,6 +91,7 @@ func newRolesCmd(ctx ProviderContext) *cobra.Command {
 	create := &cobra.Command{
 		Use:   "create --name <name> --password <password>",
 		Short: "Create a PostgreSQL role",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, wsID, bid, err := resolve(cmd)
@@ -113,48 +115,62 @@ func newRolesCmd(ctx ProviderContext) *cobra.Command {
 	cmd.AddCommand(create)
 
 	var deleteYes bool
+	var deleteName string
 	del := &cobra.Command{
-		Use: "delete <role-name>", Aliases: []string{"rm"},
-		Short: "Delete a PostgreSQL role", Args: cobra.ExactArgs(1),
+		Use: "delete --name <role-name>", Aliases: []string{"rm"},
+		Short: "Delete a PostgreSQL role", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(deleteName) == "" {
+				return fmt.Errorf("--name is required")
+			}
 			client, wsID, bid, err := resolve(cmd)
 			if err != nil {
 				return err
 			}
 			if !deleteYes {
-				if err := confirmDestructiveAction(cmd, args[0], fmt.Sprintf("Delete role %q? This operation cannot be undone.", args[0]), "delete"); err != nil {
+				if err := confirmDestructiveAction(cmd, deleteName, fmt.Sprintf("Delete role %q? This operation cannot be undone.", deleteName), "delete"); err != nil {
 					return err
 				}
 			}
-			if err := client.DeleteDBAccount(cmd.Context(), wsID, bid, args[0]); err != nil {
+			if err := client.DeleteDBAccount(cmd.Context(), wsID, bid, deleteName); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Role %s deleted\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Role %s deleted\n", deleteName)
 			return nil
 		},
 	}
+	del.Flags().StringVar(&deleteName, "name", "", "Role name (required)")
 	del.Flags().BoolVarP(&deleteYes, "yes", "y", false, "Skip the confirmation prompt")
 	cmd.AddCommand(del)
 
 	var resetPassword string
+	var resetName string
 	reset := &cobra.Command{
-		Use:   "reset-password <role-name> --password <password>",
-		Short: "Reset a PostgreSQL role password", Args: cobra.ExactArgs(1),
+		Use:   "reset-password --name <role-name> --password <password>",
+		Short: "Reset a PostgreSQL role password", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(resetName) == "" {
+				return fmt.Errorf("--name is required")
+			}
 			client, wsID, bid, err := resolve(cmd)
 			if err != nil {
 				return err
 			}
-			if err := client.ResetDBAccountPassword(cmd.Context(), wsID, bid, args[0], resetPassword); err != nil {
+			if err := client.ResetDBAccountPassword(cmd.Context(), wsID, bid, resetName, resetPassword); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Role %s password reset\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Role %s password reset\n", resetName)
 			return nil
 		},
 	}
+	reset.Flags().StringVar(&resetName, "name", "", "Role name (required)")
 	reset.Flags().StringVar(&resetPassword, "password", "", "New role password (required)")
 	_ = reset.MarkFlagRequired("password")
 	cmd.AddCommand(reset)
+	for _, child := range cmd.Commands() {
+		child.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID (required in non-interactive mode)")
+		child.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
+	}
 
 	return cmd
 }

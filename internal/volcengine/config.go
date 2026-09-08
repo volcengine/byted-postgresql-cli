@@ -87,13 +87,15 @@ type FileConfig struct {
 // directly; console-login profiles carry only a LoginSession that points at the
 // cached STS token bundle (see console_login.go).
 type Profile struct {
-	Name         string `json:"name"`
-	Mode         string `json:"mode"`
-	AccessKey    string `json:"access-key"`
-	SecretKey    string `json:"secret-key"`
-	Region       string `json:"region"`
-	Endpoint     string `json:"endpoint"`
-	SessionToken string `json:"session-token"`
+	Name            string `json:"name"`
+	Mode            string `json:"mode"`
+	AccessKey       string `json:"access-key"`
+	SecretKey       string `json:"secret-key"`
+	Region          string `json:"region"`
+	Endpoint        string `json:"endpoint"`
+	SessionToken    string `json:"session-token"`
+	IsAgentPlan     bool   `json:"is-agent-plan,omitempty"`
+	AgentPlanSeatID string `json:"agent-plan-seat-id,omitempty"`
 	// LoginSession identifies the cached Console Login STS token for
 	// console-login profiles. It is empty for AK/SK profiles.
 	LoginSession string   `json:"login-session,omitempty"`

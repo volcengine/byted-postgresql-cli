@@ -24,6 +24,7 @@ package volcengine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/volcengine/volcengine-go-sdk/service/aidap"
 )
@@ -41,6 +42,8 @@ type WorkspaceOverviewParams struct {
 type CreateWorkspaceParams struct {
 	WorkspaceName         string
 	ProjectName           string
+	IsAgentPlan           *bool
+	AgentPlanSeatID       string
 	MinCU                 *float64
 	MaxCU                 *float64
 	SuspendTimeoutSeconds *int
@@ -152,9 +155,12 @@ type WorkspaceUsage struct {
 // DescribeWorkspaces is region-scoped by the signed SDK endpoint: one call
 // returns every workspace the caller can see in the selected region.
 func (c *Client) ListWorkspaces(ctx context.Context, params ListWorkspacesParams) (ListWorkspacesResult, error) {
-	limit := params.Limit
-	if limit <= 0 {
-		limit = DefaultListLimit
+	limit, err := normalizePageLimit(params.Limit)
+	if err != nil {
+		return ListWorkspacesResult{}, err
+	}
+	if err := validatePageOffset(params.Offset); err != nil {
+		return ListWorkspacesResult{}, err
 	}
 	req := (&aidap.DescribeWorkspacesInput{}).
 		SetSortBy("update_time").
@@ -188,7 +194,10 @@ func (c *Client) ListAllWorkspaces(ctx context.Context, params ListWorkspacesPar
 	params.Limit = limit
 
 	var result ListWorkspacesResult
-	for {
+	for pageNumber := 0; ; pageNumber++ {
+		if pageNumber >= MaxAllPages {
+			return ListWorkspacesResult{}, fmt.Errorf("workspace pagination exceeded maximum of %d pages", MaxAllPages)
+		}
 		page, err := c.ListWorkspaces(ctx, params)
 		if err != nil {
 			return ListWorkspacesResult{}, err
@@ -198,7 +207,11 @@ func (c *Client) ListAllWorkspaces(ctx context.Context, params ListWorkspacesPar
 		if len(result.Workspaces) >= page.Total || len(page.Workspaces) == 0 {
 			return result, nil
 		}
-		params.Offset += limit
+		nextOffset := params.Offset + limit
+		if nextOffset <= params.Offset {
+			return ListWorkspacesResult{}, fmt.Errorf("workspace pagination offset did not advance")
+		}
+		params.Offset = nextOffset
 	}
 }
 
@@ -212,6 +225,16 @@ func (c *Client) CreateWorkspace(ctx context.Context, params CreateWorkspacePara
 	}
 	if params.ProjectName != "" {
 		req.SetProjectName(params.ProjectName)
+	}
+	if params.IsAgentPlan != nil || strings.TrimSpace(params.AgentPlanSeatID) != "" {
+		agentPlan := &aidap.AgentPlanSettingsForCreateWorkspaceInput{}
+		if params.IsAgentPlan != nil {
+			agentPlan.SetIsAgentPlan(*params.IsAgentPlan)
+		}
+		if seatID := strings.TrimSpace(params.AgentPlanSeatID); seatID != "" {
+			agentPlan.SetAgentPlanSeatId(seatID)
+		}
+		req.SetAgentPlanSettings(agentPlan)
 	}
 	if params.SuspendTimeoutSeconds != nil {
 		settings := (&aidap.ComputeSettingsForCreateWorkspaceInput{}).

@@ -38,9 +38,22 @@ import (
 // Volcengine AIDAP requires explicit database/account values, so omitted values are
 // resolved locally from the branch before requesting the connection.
 func resolveConnection(ctx context.Context, client *volcengine.Client, workspaceID, branchID, database, account string) (volcengine.DBAccountConnection, error) {
-	resolvedBranch, computeID, err := client.ResolvePrimaryDatabaseComputeID(ctx, workspaceID, branchID)
-	if err != nil {
-		return volcengine.DBAccountConnection{}, err
+	resolvedBranch := branchID
+	computeID := ""
+	var err error
+	if strings.TrimSpace(resolvedBranch) == "" {
+		resolvedBranch, computeID, err = client.ResolvePrimaryDatabaseComputeID(ctx, workspaceID, branchID)
+		if err != nil {
+			return volcengine.DBAccountConnection{}, err
+		}
+	}
+	if strings.TrimSpace(computeID) == "" {
+		var resolved string
+		resolved, computeID, err = client.ResolvePrimaryDatabaseComputeID(ctx, workspaceID, resolvedBranch)
+		if err != nil {
+			return volcengine.DBAccountConnection{}, err
+		}
+		resolvedBranch = resolved
 	}
 	workspace, err := client.DescribeWorkspaceDetail(ctx, workspaceID)
 	if err != nil {
@@ -164,11 +177,11 @@ func joinDatabaseNames(databases []volcengine.Database) string {
 
 func newConnectionStringCmd(ctx ProviderContext) *cobra.Command {
 	var (
-		workspaceID, branchID, database, account string
-		reveal, masked                           bool
+		workspaceID, branchID, computeID, database, account string
+		reveal, masked                                      bool
 	)
 	cmd := &cobra.Command{
-		Use:     "connection-string [branch-id]",
+		Use:     "connection-string [--branch-id <branch-id>]",
 		Aliases: []string{"cs"},
 		Short:   "Print a Postgres connection string for a branch",
 		Long: "Print a Postgres connection string for a branch.\n\n" +
@@ -177,13 +190,10 @@ func newConnectionStringCmd(ctx ProviderContext) *cobra.Command {
 			"inspect candidates with `databases list` and `roles list`. In non-interactive mode, provide " +
 			"--workspace-id; the workspace's default branch is used when --branch-id is omitted. " +
 			"The output contains connection credentials; protect it like a secret.",
-		Args: cobra.MaximumNArgs(1),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			bid := branchID
-			if bid == "" && len(args) == 1 {
-				bid = args[0]
-			}
 			client, err := g.NewVolcClient(cmd.Context())
 			if err != nil {
 				return err
@@ -196,7 +206,7 @@ func newConnectionStringCmd(ctx ProviderContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			conn, err := resolveConnection(cmd.Context(), client, workspaceID, bid, database, account)
+			conn, err := resolveConnectionWithCompute(cmd.Context(), client, workspaceID, bid, computeID, database, account)
 			if err != nil {
 				return err
 			}
@@ -221,11 +231,48 @@ func newConnectionStringCmd(ctx ProviderContext) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
 	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
+	cmd.Flags().StringVar(&computeID, "compute-id", "", "Compute ID (defaults to the primary Database compute)")
 	cmd.Flags().StringVar(&database, "database-name", "", "Database name (defaults to the branch default)")
 	cmd.Flags().StringVar(&account, "role-name", "", "Role/account name (defaults to the branch default)")
 	cmd.Flags().BoolVar(&reveal, "reveal", false, "Print the connection password in plain text (sensitive)")
 	cmd.Flags().BoolVar(&masked, "masked", false, "Print the connection string with the password masked (default)")
 	return cmd
+}
+
+func resolveConnectionWithCompute(ctx context.Context, client *volcengine.Client, workspaceID, branchID, computeID, database, account string) (volcengine.DBAccountConnection, error) {
+	if strings.TrimSpace(computeID) == "" {
+		return resolveConnection(ctx, client, workspaceID, branchID, database, account)
+	}
+	workspace, err := client.DescribeWorkspaceDetail(ctx, workspaceID)
+	if err != nil {
+		return volcengine.DBAccountConnection{}, err
+	}
+	endpoints, err := client.DescribeWorkspaceEndpoints(ctx, volcengine.DescribeWorkspaceEndpointsParams{
+		WorkspaceID: workspaceID, BranchID: branchID, ComputeID: computeID,
+	})
+	if err != nil {
+		return volcengine.DBAccountConnection{}, err
+	}
+	addressID := publicEndpointAddressID(endpoints.Endpoints)
+	if addressID == "" {
+		return volcengine.DBAccountConnection{}, fmt.Errorf("compute %s has no public endpoint address", computeID)
+	}
+	if database == "" || account == "" {
+		databases, err := client.DescribeDatabases(ctx, volcengine.DescribeDatabasesParams{
+			WorkspaceID: workspaceID, BranchID: branchID,
+		})
+		if err != nil {
+			return volcengine.DBAccountConnection{}, err
+		}
+		database, account, err = resolveDatabaseAndAccount(databases.Databases, database, account)
+		if err != nil {
+			return volcengine.DBAccountConnection{}, err
+		}
+	}
+	return client.DescribeDBAccountConnection(ctx, volcengine.DescribeDBAccountConnectionParams{
+		WorkspaceID: workspaceID, BranchID: branchID, ComputeID: computeID,
+		AccountName: account, DatabaseName: database, ProjectName: workspace.ProjectName, AddressID: addressID,
+	})
 }
 
 func maskConnectionPassword(rawURL string) string {

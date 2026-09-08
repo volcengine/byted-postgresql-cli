@@ -54,10 +54,6 @@ type DescribeBranchDetailResult struct {
 	Branch        BranchDetail `json:"Branch"`
 }
 
-type DescribeDefaultBranchResult struct {
-	Branch Branch
-}
-
 type CreateBranchParams struct {
 	WorkspaceID string
 	Name        string
@@ -210,9 +206,12 @@ type BranchUsage struct {
 }
 
 func (c *Client) DescribeBranches(ctx context.Context, params DescribeBranchesParams) (DescribeBranchesResult, error) {
-	limit := params.Limit
-	if limit <= 0 {
-		limit = DefaultListLimit
+	limit, err := normalizePageLimit(params.Limit)
+	if err != nil {
+		return DescribeBranchesResult{}, err
+	}
+	if err := validatePageOffset(params.Offset); err != nil {
+		return DescribeBranchesResult{}, err
 	}
 	req := (&aidap.DescribeBranchesInput{}).
 		SetWorkspaceId(params.WorkspaceID).
@@ -237,14 +236,20 @@ func (c *Client) DescribeBranches(ctx context.Context, params DescribeBranchesPa
 }
 
 func (c *Client) DescribeAllBranches(ctx context.Context, params DescribeBranchesParams) (DescribeBranchesResult, error) {
-	limit := params.Limit
-	if limit == 0 || limit > maxWorkspaceLimit {
-		limit = maxWorkspaceLimit
+	limit, err := normalizePageLimit(params.Limit)
+	if err != nil {
+		return DescribeBranchesResult{}, err
 	}
 	params.Limit = limit
+	if err := validatePageOffset(params.Offset); err != nil {
+		return DescribeBranchesResult{}, err
+	}
 
 	var result DescribeBranchesResult
-	for {
+	for pageNumber := 0; ; pageNumber++ {
+		if pageNumber >= MaxAllPages {
+			return DescribeBranchesResult{}, fmt.Errorf("branch pagination exceeded maximum of %d pages", MaxAllPages)
+		}
 		page, err := c.DescribeBranches(ctx, params)
 		if err != nil {
 			return DescribeBranchesResult{}, err
@@ -257,14 +262,21 @@ func (c *Client) DescribeAllBranches(ctx context.Context, params DescribeBranche
 		if len(result.Branches) >= page.Total || len(page.Branches) == 0 {
 			return result, nil
 		}
-		params.Offset += limit
+		nextOffset := params.Offset + limit
+		if nextOffset <= params.Offset {
+			return DescribeBranchesResult{}, fmt.Errorf("branch pagination offset did not advance")
+		}
+		params.Offset = nextOffset
 	}
 }
 
 func (c *Client) DescribeChildBranches(ctx context.Context, params DescribeChildBranchesParams) (DescribeBranchesResult, error) {
-	limit := params.Limit
-	if limit == 0 {
-		limit = maxWorkspaceLimit
+	limit, err := normalizePageLimit(params.Limit)
+	if err != nil {
+		return DescribeBranchesResult{}, err
+	}
+	if err := validatePageOffset(params.Offset); err != nil {
+		return DescribeBranchesResult{}, err
 	}
 	req := (&aidap.DescribeChildBranchesInput{}).
 		SetWorkspaceId(params.WorkspaceID).
@@ -298,13 +310,40 @@ func (c *Client) DescribeBranchDetail(ctx context.Context, workspaceID, branchID
 	}, nil
 }
 
-func (c *Client) DescribeDefaultBranch(ctx context.Context, workspaceID string) (DescribeDefaultBranchResult, error) {
-	req := (&aidap.DescribeDefaultBranchInput{}).SetWorkspaceId(workspaceID)
-	resp, err := c.aidap.DescribeDefaultBranchWithContext(ctx, req)
-	if err != nil {
-		return DescribeDefaultBranchResult{}, fmt.Errorf("failed to describe default branch: %w", err)
+// ResolveDefaultBranch returns the workspace's default branch without applying
+// the branch-status gate used by the control-plane DescribeDefaultBranch API.
+func (c *Client) ResolveDefaultBranch(ctx context.Context, workspaceID string) (Branch, error) {
+	limit := DefaultListLimit
+	for offset := 0; ; {
+		result, err := c.DescribeBranches(ctx, DescribeBranchesParams{
+			WorkspaceID: workspaceID,
+			Limit:       limit,
+			Offset:      offset,
+		})
+		if err != nil {
+			return Branch{}, err
+		}
+		if branch, ok := selectDefaultBranch(result.Branches); ok {
+			return branch, nil
+		}
+		offset += len(result.Branches)
+		if len(result.Branches) == 0 || offset >= result.Total {
+			return Branch{}, fmt.Errorf("failed to resolve default branch for workspace %s", workspaceID)
+		}
 	}
-	return DescribeDefaultBranchResult{Branch: mapBranchFromDescribeDefaultBranch(resp.Branch)}, nil
+}
+
+func selectDefaultBranch(branches []Branch) (Branch, bool) {
+	for _, branch := range branches {
+		if !branch.Default {
+			continue
+		}
+		branch.BranchID = strings.TrimSpace(branch.BranchID)
+		if branch.BranchID != "" {
+			return branch, true
+		}
+	}
+	return Branch{}, false
 }
 
 // ResolveDefaultBranchID returns branchID unchanged when non-empty, otherwise it
@@ -314,11 +353,11 @@ func (c *Client) ResolveDefaultBranchID(ctx context.Context, workspaceID, branch
 	if branchID != "" {
 		return branchID, nil
 	}
-	defaultBranch, err := c.DescribeDefaultBranch(ctx, workspaceID)
+	defaultBranch, err := c.ResolveDefaultBranch(ctx, workspaceID)
 	if err != nil {
 		return "", err
 	}
-	branchID = strings.TrimSpace(defaultBranch.Branch.BranchID)
+	branchID = strings.TrimSpace(defaultBranch.BranchID)
 	if branchID == "" {
 		return "", fmt.Errorf("failed to resolve default branch for workspace %s", workspaceID)
 	}
@@ -421,9 +460,12 @@ func (c *Client) GetRestoreWindow(ctx context.Context, workspaceID, branchID str
 }
 
 func (c *Client) DescribeRestorableBranches(ctx context.Context, params DescribeRestorableBranchesParams) (DescribeRestorableBranchesResult, error) {
-	limit := params.Limit
-	if limit == 0 {
-		limit = maxWorkspaceLimit
+	limit, err := normalizePageLimit(params.Limit)
+	if err != nil {
+		return DescribeRestorableBranchesResult{}, err
+	}
+	if err := validatePageOffset(params.Offset); err != nil {
+		return DescribeRestorableBranchesResult{}, err
 	}
 	req := (&aidap.DescribeRestorableBranchesInput{}).
 		SetWorkspaceId(params.WorkspaceID).
@@ -503,24 +545,6 @@ func mapBranchFromDescribeBranches(branch *aidap.BranchForDescribeBranchesOutput
 }
 
 func mapBranchFromDescribeChildBranches(branch *aidap.BranchForDescribeChildBranchesOutput) Branch {
-	if branch == nil {
-		return Branch{}
-	}
-	return Branch{
-		WorkspaceID:  stringValue(branch.WorkspaceId),
-		BranchID:     stringValue(branch.BranchId),
-		BranchName:   stringValue(branch.BranchName),
-		BranchStatus: stringValue(branch.BranchStatus),
-		Default:      boolValue(branch.Default),
-		Protected:    boolValue(branch.Protected),
-		Archived:     boolValue(branch.Archived),
-		InitSource:   stringValue(branch.InitSource),
-		CreateTime:   stringValue(branch.CreateTime),
-		UpdateTime:   stringValue(branch.UpdateTime),
-	}
-}
-
-func mapBranchFromDescribeDefaultBranch(branch *aidap.BranchForDescribeDefaultBranchOutput) Branch {
 	if branch == nil {
 		return Branch{}
 	}

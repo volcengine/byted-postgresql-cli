@@ -5,18 +5,21 @@ PKG := github.com/volcengine/byted-postgresql-cli
 MAIN := .
 BIN_DIR := bin
 DIST_DIR := dist
+DARWIN_ARCH ?= $(shell go env GOARCH)
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(PKG)/cmd.Version=$(VERSION)
 GOFLAGS := -trimpath -ldflags "$(LDFLAGS)"
 
-.PHONY: all build install test test-e2e test-e2e-replay test-e2e-live vet fmt lint tidy clean release test-npm release-dry npm-release
+.PHONY: all build install test test-evals test-evals-dry test-e2e test-e2e-replay test-e2e-live vet fmt lint tidy clean release test-npm release-dry npm-release
 
 all: build
 
 build:
-	@mkdir -p $(BIN_DIR)
+	@mkdir -p $(BIN_DIR) $(DIST_DIR)
 	CGO_ENABLED=0 go build $(GOFLAGS) -o $(BIN_DIR)/$(BINARY) $(MAIN)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=$(DARWIN_ARCH) go build $(GOFLAGS) -o $(DIST_DIR)/$(BINARY)-darwin-$(DARWIN_ARCH) $(MAIN)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -o $(DIST_DIR)/$(BINARY)-linux-amd64 $(MAIN)
 
 install:
 	CGO_ENABLED=0 go install $(GOFLAGS) $(MAIN)

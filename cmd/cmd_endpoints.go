@@ -38,13 +38,11 @@ func newEndpointsBaseCmd(ctx ProviderContext) *cobra.Command {
 		Aliases: []string{"endpoint"},
 		Short:   "Manage PostgreSQL workspace endpoints on " + ctx.DisplayName,
 	}
-	var workspaceID, branchID string
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
-	cmd.PersistentFlags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
 	return cmd
 }
 
 func newEndpointsListCmd(ctx ProviderContext) *cobra.Command {
+	var workspaceID, branchID string
 	resolve := func(cmd *cobra.Command) (*volcengine.Client, string, string, error) {
 		g := fromCtx(cmd)
 		client, err := g.NewVolcClient(cmd.Context())
@@ -73,6 +71,7 @@ func newEndpointsListCmd(ctx ProviderContext) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List workspace endpoints",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, wsID, bid, err := resolve(cmd)
@@ -98,6 +97,8 @@ func newEndpointsListCmd(ctx ProviderContext) *cobra.Command {
 			return writeListSummary(cmd, g, result.Endpoints, endpointFields, nil, "endpoints")
 		},
 	}
+	list.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID (required in non-interactive mode)")
+	list.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
 	return list
 }
 

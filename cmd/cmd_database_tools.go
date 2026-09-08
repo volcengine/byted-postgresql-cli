@@ -54,8 +54,10 @@ type databaseTarget struct {
 
 func newDatabaseToolsCmd(ctx ProviderContext) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "db",
-		Short: "Run PostgreSQL queries and schema tools",
+		Use:     "db",
+		Short:   "Run PostgreSQL queries and schema tools",
+		Long:    "Run SQL queries, dump or pull schemas, and inspect database advisors. Database commands require either --db-url or workspace target flags.",
+		Example: "byted-postgresql-cli db query --workspace-id ws-xxx --branch-id br-main --database-name app --role-name app_admin --sql 'select now()'",
 	}
 	cmd.AddCommand(
 		newDBQueryCmd(),
@@ -187,10 +189,10 @@ ORDER BY n_dead_tup DESC;`,
 				return runPSQLTarget(cmd, target, spec.sql, format)
 			},
 		}
+		addDatabaseTargetFlags(child, &target)
+		child.Flags().BoolVar(&unaligned, "unaligned", false, "Print rows psql-style, pipe-separated (cannot combine with --output/-o)")
 		dbCmd.AddCommand(child)
 	}
-	addDatabaseTargetFlags(dbCmd, &target)
-	dbCmd.PersistentFlags().BoolVar(&unaligned, "unaligned", false, "Print rows psql-style, pipe-separated (cannot combine with --output/-o)")
 	cmd.AddCommand(dbCmd)
 	return cmd
 }
@@ -202,12 +204,7 @@ func newDBQueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query [sql]",
 		Short: "Execute a SQL query against PostgreSQL",
-		Long: `Execute a SQL query against PostgreSQL.
-
-Results honor the global --output/-o flag (table, json, yaml, csv, or tsv), so
-db query behaves like every other command. Use --unaligned for psql-style,
-pipe-separated rows; it cannot be combined with an explicit --output.`,
-		Args: cobra.MaximumNArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sql, err := queryText(args, file)
 			if err != nil {
@@ -237,6 +234,7 @@ func newDBDumpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dump",
 		Short: "Dump a PostgreSQL database with pg_dump",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !dryRun && (reveal || masked) {
 				return fmt.Errorf("--reveal and --masked can only be used with --dry-run")
@@ -376,6 +374,7 @@ func newDBAdvisorsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "advisors",
 		Short: "Check PostgreSQL for common security and performance issues",
+		Args:  cobra.NoArgs,
 		Long: `Run independent PostgreSQL health checks and report actionable findings.
 
 Checks include dead tuples, missing primary keys, unused indexes, long
@@ -395,7 +394,7 @@ Unavailable optional checks are reported as skipped findings.`,
 }
 
 func addDatabaseTargetFlags(cmd *cobra.Command, target *databaseTarget) {
-	flags := cmd.PersistentFlags()
+	flags := cmd.Flags()
 	flags.StringVar(&target.url, "db-url", "", "PostgreSQL connection URL")
 	flags.StringVar(&target.workspaceID, "workspace-id", "", "PostgreSQL workspace ID")
 	flags.StringVar(&target.branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")

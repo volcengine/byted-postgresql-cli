@@ -274,6 +274,9 @@ func normalizeYAMLValue(value reflect.Value) (any, error) {
 		return nil, nil
 	}
 	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if !value.IsValid() {
+			return nil, nil
+		}
 		if value.IsNil() {
 			return nil, nil
 		}
@@ -291,6 +294,9 @@ func normalizeYAMLValue(value reflect.Value) (any, error) {
 			}
 			name, options := structuredFieldName(field)
 			if name == "-" || (options["omitempty"] && value.Field(i).IsZero()) {
+				continue
+			}
+			if !value.Field(i).IsValid() || !value.Field(i).CanInterface() {
 				continue
 			}
 			normalized, err := normalizeYAMLValue(value.Field(i))
@@ -317,7 +323,11 @@ func normalizeYAMLValue(value reflect.Value) (any, error) {
 		result := make(map[string]any, value.Len())
 		iter := value.MapRange()
 		for iter.Next() {
-			key := fmt.Sprint(iter.Key().Interface())
+			keyValue := iter.Key()
+			if !keyValue.IsValid() || !keyValue.CanInterface() {
+				continue
+			}
+			key := fmt.Sprint(keyValue.Interface())
 			normalized, err := normalizeYAMLValue(iter.Value())
 			if err != nil {
 				return nil, err
@@ -329,6 +339,9 @@ func normalizeYAMLValue(value reflect.Value) (any, error) {
 		}
 		return result, nil
 	default:
+		if !value.IsValid() || !value.CanInterface() {
+			return nil, nil
+		}
 		return value.Interface(), nil
 	}
 }
@@ -457,13 +470,19 @@ func scalarString(value any) string {
 
 func extractRow(v reflect.Value, fields []string) []string {
 	out := make([]string, len(fields))
-	if v.Kind() == reflect.Ptr {
+	for v.IsValid() && (v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface) {
+		if v.IsNil() {
+			return out
+		}
 		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return out
 	}
 	if v.Kind() == reflect.Map {
 		for i, f := range fields {
 			mv := v.MapIndex(reflect.ValueOf(f))
-			if mv.IsValid() {
+			if mv.IsValid() && mv.CanInterface() {
 				out[i] = fmt.Sprint(mv.Interface())
 				if isTimestampField(snakeCase(f)) {
 					out[i] = normalizeTimestamp(out[i])
@@ -474,7 +493,9 @@ func extractRow(v reflect.Value, fields []string) []string {
 	}
 	if v.Kind() != reflect.Struct {
 		for i := range fields {
-			out[i] = fmt.Sprint(v.Interface())
+			if v.CanInterface() {
+				out[i] = fmt.Sprint(v.Interface())
+			}
 		}
 		return out
 	}
@@ -489,7 +510,7 @@ func extractRow(v reflect.Value, fields []string) []string {
 				fv := v.Field(j)
 				if fv.IsValid() && fv.Kind() == reflect.Bool {
 					out[i] = strconv.FormatBool(fv.Bool())
-				} else if fv.IsValid() && !fv.IsZero() {
+				} else if fv.IsValid() && fv.CanInterface() {
 					out[i] = fmt.Sprint(fv.Interface())
 				}
 				if isTimestampField(snakeCase(f)) {

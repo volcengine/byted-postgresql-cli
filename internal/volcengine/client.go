@@ -42,6 +42,9 @@ import (
 	"time"
 
 	"github.com/volcengine/volcengine-go-sdk/service/aidap"
+	"github.com/volcengine/volcengine-go-sdk/service/iam20210801"
+	"github.com/volcengine/volcengine-go-sdk/service/sts"
+	"github.com/volcengine/volcengine-go-sdk/service/vpc"
 	sdk "github.com/volcengine/volcengine-go-sdk/volcengine"
 	"github.com/volcengine/volcengine-go-sdk/volcengine/credentials"
 	"github.com/volcengine/volcengine-go-sdk/volcengine/endpoints"
@@ -59,6 +62,9 @@ const managementAPIRequestTimeout = 60 * time.Second
 type Client struct {
 	cfg   Config
 	aidap *aidap.AIDAP
+	iam   *iam20210801.IAM20210801
+	sts   *sts.STS
+	vpc   *vpc.VPC
 }
 
 // NewClient builds a client from a resolved AK/SK Config. It returns an error
@@ -84,7 +90,23 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Volcengine AIDAP client: %w", err)
 	}
-	return &Client{cfg: cfg, aidap: aidap.New(sess)}, nil
+	iamConfig := sdk.NewConfig().
+		WithCredentials(creds).
+		WithRegion(region).
+		WithHTTPClient(&http.Client{Timeout: managementAPIRequestTimeout, Transport: newTransport()}).
+		WithSimpleError(true).
+		WithEndpointResolver(endpoints.NewStandardEndpointResolver())
+	iamSession, err := session.NewSession(iamConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Volcengine IAM client: %w", err)
+	}
+	return &Client{
+		cfg:   cfg,
+		aidap: aidap.New(sess),
+		iam:   iam20210801.New(iamSession),
+		sts:   sts.New(sess),
+		vpc:   vpc.New(sess),
+	}, nil
 }
 
 // GatewayKnowsRegion reports whether the aidap service resolves for a region.

@@ -26,7 +26,47 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+func TestLeafCommandsRejectUnexpectedPositionalArguments(t *testing.T) {
+	find := func(parent *cobra.Command, name string) *cobra.Command {
+		t.Helper()
+		for _, child := range parent.Commands() {
+			if child.Name() == name {
+				return child
+			}
+		}
+		t.Fatalf("command %q not found under %q", name, parent.Name())
+		return nil
+	}
+
+	tests := []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{"workspaces list", newWorkspacesListCmd()},
+		{"workspaces overview", newWorkspacesOverviewCmd()},
+		{"branches diff", newBranchesDiffCmd(func(*cobra.Command) (string, error) { return "", nil })},
+		{"branches list", newBranchesListCmd(func(*cobra.Command) (string, error) { return "", nil })},
+		{"computes list", find(newComputesCmd(defaultProviderContext()), "list")},
+		{"databases list", find(newDatabasesCmd(defaultProviderContext()), "list")},
+		{"roles list", find(newRolesCmd(defaultProviderContext()), "list")},
+		{"endpoints list", newEndpointsListCmd(defaultProviderContext())},
+		{"mcp serve", find(newMCPCmd(defaultProviderContext()), "serve")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.cmd.Args(test.cmd, []string{"unexpected"})
+			if err == nil ||
+				(!strings.Contains(err.Error(), "accepts 0 arg") &&
+					!strings.Contains(err.Error(), "unknown command")) {
+				t.Fatalf("error = %v, want positional argument rejection", err)
+			}
+		})
+	}
+}
 
 func TestRootCommandGroupsRejectUnknownSubcommands(t *testing.T) {
 	for _, name := range []string{

@@ -47,7 +47,6 @@ func newBranchesCmd(ctx ProviderContext) *cobra.Command {
 	}
 
 	var workspaceID string
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID the branch belongs to")
 
 	workspaceResolverFn := func(runCmd *cobra.Command) (string, error) {
 		g := fromCtx(runCmd)
@@ -58,7 +57,7 @@ func newBranchesCmd(ctx ProviderContext) *cobra.Command {
 		return resolveWorkspace(runCmd.Context(), g, client, workspaceID)
 	}
 
-	cmd.AddCommand(
+	children := []*cobra.Command{
 		newBranchesListCmd(workspaceResolverFn),
 		newBranchesGetCmd(workspaceResolverFn),
 		newBranchesDefaultCmd(workspaceResolverFn),
@@ -72,7 +71,17 @@ func newBranchesCmd(ctx ProviderContext) *cobra.Command {
 		newBranchesRestorableCmd(workspaceResolverFn),
 		newBranchesRestoreCmd(workspaceResolverFn),
 		newBranchesDiffCmd(workspaceResolverFn),
-	)
+	}
+	for _, child := range children {
+		if child.Name() == "children" {
+			if list, _, err := child.Find([]string{"list"}); err == nil && list != nil {
+				list.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID (required in non-interactive mode)")
+			}
+		} else {
+			child.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID (required in non-interactive mode)")
+		}
+		cmd.AddCommand(child)
+	}
 	return cmd
 }
 
@@ -82,6 +91,7 @@ func newBranchesDiffCmd(resolve workspaceResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff --source-branch-id <id> --source-database-name <name> --source-schema-name <name> --target-branch-id <id> --target-database-name <name> --target-schema-name <name>",
 		Short: "Compare schemas between two branches",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, err := g.NewVolcClient(cmd.Context())
@@ -208,6 +218,7 @@ func newBranchesListCmd(resolve workspaceResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List branches in a workspace",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			wsID, err := resolve(cmd)
@@ -240,12 +251,16 @@ func newBranchesListCmd(resolve workspaceResolver) *cobra.Command {
 }
 
 func newBranchesGetCmd(resolve workspaceResolver) *cobra.Command {
+	var branchID string
 	cmd := &cobra.Command{
-		Use:   "get <branch-id>",
+		Use:   "get --branch-id <branch-id>",
 		Short: "Get a branch by id",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			wsID, err := resolve(cmd)
 			if err != nil {
 				return err
@@ -254,13 +269,14 @@ func newBranchesGetCmd(resolve workspaceResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.DescribeBranchDetail(cmd.Context(), wsID, args[0])
+			result, err := client.DescribeBranchDetail(cmd.Context(), wsID, branchID)
 			if err != nil {
 				return err
 			}
 			return g.Writer().WriteItem(result.Branch, branchDetailFields)
 		},
 	}
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	return cmd
 }
 
@@ -268,6 +284,7 @@ func newBranchesDefaultCmd(resolve workspaceResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "default",
 		Short: "Show the workspace's default branch",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			wsID, err := resolve(cmd)
@@ -278,11 +295,11 @@ func newBranchesDefaultCmd(resolve workspaceResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.DescribeDefaultBranch(cmd.Context(), wsID)
+			result, err := client.ResolveDefaultBranch(cmd.Context(), wsID)
 			if err != nil {
 				return err
 			}
-			return g.Writer().WriteItem(result.Branch, branchFields)
+			return g.Writer().WriteItem(result, branchFields)
 		},
 	}
 	return cmd
@@ -294,36 +311,42 @@ func newBranchesChildrenCmd(resolve workspaceResolver) *cobra.Command {
 		limit    int
 		offset   int
 	)
-	cmd := &cobra.Command{
-		Use:   "children --parent-branch-id <branch-id>",
-		Short: "List child branches of a parent branch",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			g := fromCtx(cmd)
-			if parentID == "" {
-				return fmt.Errorf("--parent-branch-id is required")
-			}
-			wsID, err := resolve(cmd)
-			if err != nil {
-				return err
-			}
-			client, err := g.NewVolcClient(cmd.Context())
-			if err != nil {
-				return err
-			}
-			result, err := client.DescribeChildBranches(cmd.Context(), volcengine.DescribeChildBranchesParams{
-				WorkspaceID: wsID, ParentID: parentID, Limit: requestedListLimit(cmd, limit), Offset: offset,
-			})
-			if err != nil {
-				return err
-			}
-			return writeListPage(cmd, g, result.Branches, branchFields, result.Total, limit, offset, "branches")
-		},
+	run := func(cmd *cobra.Command, args []string) error {
+		g := fromCtx(cmd)
+		if parentID == "" {
+			return fmt.Errorf("--parent-branch-id is required")
+		}
+		wsID, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		client, err := g.NewVolcClient(cmd.Context())
+		if err != nil {
+			return err
+		}
+		result, err := client.DescribeChildBranches(cmd.Context(), volcengine.DescribeChildBranchesParams{
+			WorkspaceID: wsID, ParentID: parentID, Limit: requestedListLimit(cmd, limit), Offset: offset,
+		})
+		if err != nil {
+			return err
+		}
+		return writeListPage(cmd, g, result.Branches, branchFields, result.Total, limit, offset, "branches")
 	}
-	cmd.Flags().StringVar(&parentID, "parent-branch-id", "", "Parent branch ID (required)")
-	cmd.Flags().StringVar(&parentID, "parent-id", "", "Deprecated alias for --parent-branch-id")
-	_ = cmd.Flags().MarkHidden("parent-id")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum number of branches to return (default 10, 0=100, max 100)")
-	cmd.Flags().IntVar(&offset, "offset", 0, "Number of branches to skip")
+	cmd := &cobra.Command{
+		Use:   "children",
+		Short: "List child branches under a parent branch",
+		Args:  cobra.NoArgs,
+	}
+	list := &cobra.Command{
+		Use:   "list --parent-branch-id <branch-id>",
+		Short: "List child branches under a parent branch",
+		Args:  cobra.NoArgs,
+		RunE:  run,
+	}
+	list.Flags().StringVar(&parentID, "parent-branch-id", "", "Parent branch ID (required)")
+	list.Flags().IntVar(&limit, "limit", 0, "Maximum number of branches to return (default 10, 0=100, max 100)")
+	list.Flags().IntVar(&offset, "offset", 0, "Number of branches to skip")
+	cmd.AddCommand(list)
 	return cmd
 }
 
@@ -337,6 +360,7 @@ func newBranchesCreateCmd(resolve workspaceResolver) *cobra.Command {
 		Use:     "create --name <name>",
 		Short:   "Create a branch",
 		Example: "byted-postgresql-cli branches create --workspace-id ws-xxx --name feature-a",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			if name == "" {
@@ -378,15 +402,19 @@ func validateBranchName(name string) error {
 
 func newBranchesUpdateCmd(resolve workspaceResolver) *cobra.Command {
 	var (
+		branchID  string
 		name      string
 		protected string
 	)
 	cmd := &cobra.Command{
-		Use:   "update <branch-id> [--name <new-name>] [--protected true|false]",
+		Use:   "update --branch-id <branch-id> [--name <new-name>] [--protected true|false]",
 		Short: "Rename a branch or change branch protection",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("protected") {
 				return fmt.Errorf("specify --name and/or --protected")
 			}
@@ -407,7 +435,7 @@ func newBranchesUpdateCmd(resolve workspaceResolver) *cobra.Command {
 				protectedValue = &value
 			}
 			result, err := client.UpdateBranch(cmd.Context(), volcengine.UpdateBranchParams{
-				WorkspaceID: wsID, BranchID: args[0], Name: changedString(cmd, "name", name), Protected: protectedValue,
+				WorkspaceID: wsID, BranchID: branchID, Name: changedString(cmd, "name", name), Protected: protectedValue,
 			})
 			if err != nil {
 				return err
@@ -417,6 +445,7 @@ func newBranchesUpdateCmd(resolve workspaceResolver) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "New branch name")
 	cmd.Flags().StringVar(&protected, "protected", "", "Set branch protection to true or false")
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	return cmd
 }
 
@@ -428,21 +457,25 @@ func changedString(cmd *cobra.Command, name, value string) *string {
 }
 
 func newBranchesDeleteCmd(resolve workspaceResolver) *cobra.Command {
+	var branchID string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:     "delete <branch-id>",
+		Use:     "delete --branch-id <branch-id>",
 		Aliases: []string{"rm"},
 		Short:   "Delete a branch",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			wsID, err := resolve(cmd)
 			if err != nil {
 				return err
 			}
 			if !yes {
-				summary := fmt.Sprintf("Delete branch %q? This operation cannot be undone.", args[0])
-				if err := confirmDestructiveAction(cmd, args[0], summary, "delete"); err != nil {
+				summary := fmt.Sprintf("Delete branch %q? This operation cannot be undone.", branchID)
+				if err := confirmDestructiveAction(cmd, branchID, summary, "delete"); err != nil {
 					return err
 				}
 			}
@@ -450,25 +483,30 @@ func newBranchesDeleteCmd(resolve workspaceResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := client.DeleteBranch(cmd.Context(), wsID, args[0]); err != nil {
+			if _, err := client.DeleteBranch(cmd.Context(), wsID, branchID); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Branch %s deleted\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Branch %s deleted\n", branchID)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
 	return cmd
 }
 
 func newBranchesRestartCmd(resolve workspaceResolver) *cobra.Command {
+	var branchID string
 	var computeIDs []string
 	cmd := &cobra.Command{
-		Use:   "restart <branch-id>",
+		Use:   "restart --branch-id <branch-id>",
 		Short: "Restart a branch's computes",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			wsID, err := resolve(cmd)
 			if err != nil {
 				return err
@@ -478,25 +516,30 @@ func newBranchesRestartCmd(resolve workspaceResolver) *cobra.Command {
 				return err
 			}
 			if _, err := client.RestartBranch(cmd.Context(), volcengine.RestartBranchParams{
-				WorkspaceID: wsID, BranchID: args[0], ComputeIDs: computeIDs,
+				WorkspaceID: wsID, BranchID: branchID, ComputeIDs: computeIDs,
 			}); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Branch %s restarting\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Branch %s restarting\n", branchID)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	cmd.Flags().StringSliceVar(&computeIDs, "compute-id", nil, "Restart only these compute ids (repeatable)")
 	return cmd
 }
 
 func newBranchesSetDefaultCmd(resolve workspaceResolver) *cobra.Command {
+	var branchID string
 	cmd := &cobra.Command{
-		Use:   "set-default <branch-id>",
+		Use:   "set-default --branch-id <branch-id>",
 		Short: "Set a branch as the workspace's default",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			wsID, err := resolve(cmd)
 			if err != nil {
 				return err
@@ -505,23 +548,28 @@ func newBranchesSetDefaultCmd(resolve workspaceResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.SetAsDefaultBranch(cmd.Context(), wsID, args[0])
+			result, err := client.SetAsDefaultBranch(cmd.Context(), wsID, branchID)
 			if err != nil {
 				return err
 			}
 			return g.Writer().WriteItem(result.Branch, branchDetailFields)
 		},
 	}
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	return cmd
 }
 
 func newBranchesRestoreWindowCmd(resolve workspaceResolver) *cobra.Command {
+	var branchID string
 	cmd := &cobra.Command{
-		Use:   "restore-window <branch-id>",
+		Use:   "restore-window --branch-id <branch-id>",
 		Short: "Show a branch's point-in-time restore window",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			wsID, err := resolve(cmd)
 			if err != nil {
 				return err
@@ -530,13 +578,14 @@ func newBranchesRestoreWindowCmd(resolve workspaceResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			window, err := client.GetRestoreWindow(cmd.Context(), wsID, args[0])
+			window, err := client.GetRestoreWindow(cmd.Context(), wsID, branchID)
 			if err != nil {
 				return err
 			}
 			return g.Writer().WriteItem(window, []string{"BranchId", "WindowSizeSeconds", "BranchCreateTime", "StartTime", "EndTime"})
 		},
 	}
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	return cmd
 }
 
@@ -550,6 +599,7 @@ func newBranchesRestorableCmd(resolve workspaceResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restorable",
 		Short: "List branches restorable at a point in time",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(atTime) == "" {
 				return fmt.Errorf("--time is required")
@@ -581,15 +631,19 @@ func newBranchesRestorableCmd(resolve workspaceResolver) *cobra.Command {
 
 func newBranchesRestoreCmd(resolve workspaceResolver) *cobra.Command {
 	var (
+		branchID       string
 		atTime         string
 		sourceBranchID string
 	)
 	cmd := &cobra.Command{
-		Use:   "restore <branch-id>",
+		Use:   "restore --branch-id <branch-id>",
 		Short: "Restore a branch to a point in time",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			if strings.TrimSpace(branchID) == "" {
+				return fmt.Errorf("--branch-id is required")
+			}
 			wsID, err := resolve(cmd)
 			if err != nil {
 				return err
@@ -599,7 +653,7 @@ func newBranchesRestoreCmd(resolve workspaceResolver) *cobra.Command {
 				return err
 			}
 			result, err := client.BranchRestore(cmd.Context(), volcengine.BranchRestoreParams{
-				WorkspaceID: wsID, BranchID: args[0], Time: atTime, SourceBranchID: sourceBranchID,
+				WorkspaceID: wsID, BranchID: branchID, Time: atTime, SourceBranchID: sourceBranchID,
 			})
 			if err != nil {
 				return err
@@ -609,5 +663,6 @@ func newBranchesRestoreCmd(resolve workspaceResolver) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&atTime, "time", "", "Point in time to restore to (RFC3339)")
 	cmd.Flags().StringVar(&sourceBranchID, "source-branch-id", "", "Source branch to restore data from")
+	cmd.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (required)")
 	return cmd
 }

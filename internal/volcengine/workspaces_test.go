@@ -136,6 +136,16 @@ func TestListWorkspacesPassesPaginationThrough(t *testing.T) {
 	}
 }
 
+func TestListWorkspacesRejectsNegativePagination(t *testing.T) {
+	client, _ := newRecordingClient(t, `{"Result":{"Total":0,"Workspaces":[]}}`)
+	if _, err := client.ListWorkspaces(context.Background(), ListWorkspacesParams{Limit: -1}); err == nil {
+		t.Fatal("negative workspace limit should be rejected")
+	}
+	if _, err := client.ListWorkspaces(context.Background(), ListWorkspacesParams{Offset: -1}); err == nil {
+		t.Fatal("negative workspace offset should be rejected")
+	}
+}
+
 // One region-scoped call returns every workspace the caller can see; the
 // gateway's own RegionId on each item is preserved rather than filtered again.
 func TestListWorkspacesKeepsEveryResult(t *testing.T) {
@@ -171,8 +181,19 @@ func TestResolveDefaultBranchIDUsesExplicitBranchWithoutRequest(t *testing.T) {
 	}
 }
 
-func TestResolveDefaultBranchIDCallsDescribeDefaultBranch(t *testing.T) {
-	client, body := newRecordingClient(t, `{"Result":{"Branch":{"BranchId":"default-branch"}}}`)
+func TestResolveDefaultBranchUsesDescribeBranchesAndKeepsStatus(t *testing.T) {
+	client, body := newRecordingClient(t, `{"Result":{"Total":2,"Branches":[
+		{"WorkspaceId":"ws-1","BranchId":"transitioning-branch","BranchName":"transitioning","BranchStatus":"Updating","Default":false},
+		{"WorkspaceId":"ws-1","BranchId":"default-branch","BranchName":"main","BranchStatus":"Error","Default":true}
+	]}}`)
+
+	defaultBranch, err := client.ResolveDefaultBranch(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultBranch.BranchID != "default-branch" || defaultBranch.BranchStatus != "Error" {
+		t.Fatalf("got default branch=%+v, want default-branch with Error status", defaultBranch)
+	}
 
 	got, err := client.ResolveDefaultBranchID(context.Background(), "ws-1", "")
 	if err != nil {
@@ -187,9 +208,26 @@ func TestResolveDefaultBranchIDCallsDescribeDefaultBranch(t *testing.T) {
 }
 
 func TestResolveDefaultBranchIDRejectsEmptyAPIResult(t *testing.T) {
-	client, _ := newRecordingClient(t, `{"Result":{"Branch":{}}}`)
+	client, _ := newRecordingClient(t, `{"Result":{"Total":1,"Branches":[
+		{"BranchId":"not-default","BranchStatus":"Available","Default":false}
+	]}}`)
 
 	if _, err := client.ResolveDefaultBranchID(context.Background(), "ws-1", ""); err == nil {
 		t.Fatal("expected an error when the API returns no default branch id")
+	}
+}
+
+func TestSelectDefaultBranchIgnoresStatusAndRequiresID(t *testing.T) {
+	for _, status := range []string{"Error", "Updating", "Creating", "Stopped"} {
+		branch, ok := selectDefaultBranch([]Branch{
+			{BranchID: "br-main", BranchStatus: status, Default: true},
+		})
+		if !ok || branch.BranchID != "br-main" || branch.BranchStatus != status {
+			t.Fatalf("status %q: got branch=%+v ok=%v", status, branch, ok)
+		}
+	}
+
+	if _, ok := selectDefaultBranch([]Branch{{BranchID: "  ", Default: true}}); ok {
+		t.Fatal("default branch without an ID should not be selected")
 	}
 }

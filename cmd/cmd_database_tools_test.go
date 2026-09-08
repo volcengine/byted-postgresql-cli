@@ -158,8 +158,12 @@ func TestDatabaseSQLCommandsShareOutputFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if db.PersistentFlags().Lookup("unaligned") == nil {
-		t.Fatal("inspect db should offer --unaligned to all children")
+	child, _, err := db.Find([]string{"db-stats"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child == nil || child.Flags().Lookup("unaligned") == nil {
+		t.Fatal("inspect db children should offer --unaligned")
 	}
 }
 

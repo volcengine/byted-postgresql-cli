@@ -37,14 +37,14 @@ func TestFormatStatusShowsResolvedVolcengineConfiguration(t *testing.T) {
 	got := formatStatus(statusSnapshot{Authentication: statusAuthentication{
 		Status:         "configured",
 		Profile:        "default",
-		AccessKey:      "AKLT******7890",
+		AccessKey:      "test*******-key",
 		Region:         "cn-beijing",
 		CredentialFrom: "profile (~/.volcengine/config.json)",
 	}})
 	for _, want := range []string{
 		"Authentication: configured",
 		"Profile: default",
-		"Access key: AKLT******7890",
+		"Access key: test*******-key",
 		"Region: cn-beijing",
 		"Credentials: profile (~/.volcengine/config.json)",
 	} {
@@ -72,14 +72,14 @@ func TestFormatStatusWithoutCredentialsIsActionable(t *testing.T) {
 }
 
 func TestBuildStatusSnapshotUsesEnvironmentCredentials(t *testing.T) {
-	t.Setenv(volcengine.EnvAccessKeyID, "AKLT1234567890")
-	t.Setenv(volcengine.EnvSecretAccessKey, "secret")
+	t.Setenv(volcengine.EnvAccessKeyID, "test-access-key")
+	t.Setenv(volcengine.EnvSecretAccessKey, "test-secret-key")
 	t.Setenv(volcengine.EnvRegion, "cn-shanghai")
 
 	snapshot := buildStatusSnapshot()
 	auth := snapshot.Authentication
 	if auth.Status != "configured" || auth.Profile != "(env)" ||
-		auth.AccessKey != "AKLT******7890" || auth.Region != "cn-shanghai" ||
+		auth.AccessKey != "test*******-key" || auth.Region != "cn-shanghai" ||
 		auth.CredentialFrom != "environment" {
 		t.Fatalf("unexpected environment status: %+v", auth)
 	}
@@ -103,7 +103,7 @@ func TestWriteStructuredStatusJSON(t *testing.T) {
 		Authentication: statusAuthentication{
 			Status:         "configured",
 			Profile:        "production",
-			AccessKey:      "AKLT******7890",
+			AccessKey:      "test*******-key",
 			Region:         "cn-beijing",
 			Endpoint:       "https://aidap.cn-beijing.volcengineapi.com",
 			CredentialFrom: "profile (~/.volcengine/config.json)",
@@ -123,7 +123,7 @@ func TestWriteStructuredStatusJSON(t *testing.T) {
 		t.Fatalf("authentication = %T, want object", got["authentication"])
 	}
 	if auth["status"] != "configured" || auth["profile"] != "production" ||
-		auth["access_key"] != "AKLT******7890" || auth["region"] != "cn-beijing" ||
+		auth["access_key"] != "test*******-key" || auth["region"] != "cn-beijing" ||
 		auth["endpoint"] != "https://aidap.cn-beijing.volcengineapi.com" ||
 		auth["credential_from"] != "profile (~/.volcengine/config.json)" {
 		t.Fatalf("unexpected JSON status: %s", output.String())
@@ -179,7 +179,7 @@ func TestBuildStatusSnapshotUsesSelectedProfile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data := `{"current":"prod","profiles":{"prod":{"name":"prod","mode":"ak","access-key":"AKLT1234567890","secret-key":"secret","region":"cn-shanghai"}}}`
+	data := `{"current":"prod","profiles":{"prod":{"name":"prod","mode":"ak","access-key":"test-access-key","secret-key":"test-secret-key","region":"cn-shanghai"}}}`
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestBuildStatusSnapshotUsesSelectedProfile(t *testing.T) {
 	snapshot := buildStatusSnapshot()
 	auth := snapshot.Authentication
 	if auth.Status != "configured" || auth.Profile != "prod" ||
-		auth.AccessKey != "AKLT******7890" || auth.Region != "cn-shanghai" {
+		auth.AccessKey != "test*******-key" || auth.Region != "cn-shanghai" {
 		t.Fatalf("unexpected profile status: %+v", auth)
 	}
 }

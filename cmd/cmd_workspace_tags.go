@@ -31,13 +31,19 @@ import (
 )
 
 func newWorkspaceTagsCmd(ctx ProviderContext) *cobra.Command {
-	var workspaceID string
-	cmd := &cobra.Command{Use: "tags", Short: "Manage workspace tags"}
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
+	cmd := &cobra.Command{
+		Use:   "tags",
+		Short: "Manage workspace tags",
+	}
 
 	list := &cobra.Command{
 		Use: "list", Short: "List workspace tags",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			workspaceID, err := cmd.Flags().GetString("workspace-id")
+			if err != nil {
+				return err
+			}
 			client, err := fromCtx(cmd).NewVolcClient(cmd.Context())
 			if err != nil {
 				return err
@@ -53,8 +59,20 @@ func newWorkspaceTagsCmd(ctx ProviderContext) *cobra.Command {
 
 	add := &cobra.Command{
 		Use: "add --tag key=value", Short: "Add workspace tags",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			workspaceID, err := cmd.Flags().GetString("workspace-id")
+			if err != nil {
+				return err
+			}
 			values, _ := cmd.Flags().GetStringSlice("tag")
+			workspaceID = strings.TrimSpace(workspaceID)
+			if workspaceID == "" {
+				return fmt.Errorf("--workspace-id is required")
+			}
+			if len(values) == 0 {
+				return fmt.Errorf("--tag is required")
+			}
 			tags, err := parseWorkspaceTags(values)
 			if err != nil {
 				return err
@@ -74,7 +92,12 @@ func newWorkspaceTagsCmd(ctx ProviderContext) *cobra.Command {
 
 	remove := &cobra.Command{
 		Use: "remove --key <key>", Short: "Remove workspace tags",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			workspaceID, err := cmd.Flags().GetString("workspace-id")
+			if err != nil {
+				return err
+			}
 			keys, _ := cmd.Flags().GetStringSlice("key")
 			if len(keys) == 0 {
 				return fmt.Errorf("--key is required")
@@ -91,11 +114,17 @@ func newWorkspaceTagsCmd(ctx ProviderContext) *cobra.Command {
 		},
 	}
 	remove.Flags().StringSlice("key", nil, "Tag key to remove (repeatable)")
+	for _, child := range []*cobra.Command{list, add, remove} {
+		child.Flags().String("workspace-id", "", "Workspace ID (required)")
+	}
 	cmd.AddCommand(add, remove)
 	return cmd
 }
 
 func parseWorkspaceTags(values []string) ([]volcengine.WorkspaceTag, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("--tag is required")
+	}
 	tags := make([]volcengine.WorkspaceTag, 0, len(values))
 	for _, raw := range values {
 		parts := strings.SplitN(raw, "=", 2)

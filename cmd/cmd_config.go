@@ -29,6 +29,7 @@ func newConfigCmd(ctx ProviderContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Manage CLI configuration",
+		Long:  "Show the resolved CLI configuration. Use the `status` subcommand.",
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",

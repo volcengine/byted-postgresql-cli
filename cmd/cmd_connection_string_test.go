@@ -136,6 +136,16 @@ func TestConnectionCommandsExplainSelectionAndTokenRules(t *testing.T) {
 	}
 }
 
+func TestPsqlRejectsPositionalArgumentsBeforeDash(t *testing.T) {
+	psql := newPsqlCmd(defaultProviderContext())
+	psql.SetArgs([]string{"branch-positional", "--", "-c", "SELECT 1"})
+
+	err := psql.Execute()
+	if err == nil || !strings.Contains(err.Error(), "psql accepts no positional arguments") {
+		t.Fatalf("psql positional argument error = %v, want explicit rejection", err)
+	}
+}
+
 func TestMaskConnectionPassword(t *testing.T) {
 	raw := "postgresql://user_admin:66-Jd627mqsjFahR9%23@host/aidb?sslmode=require"
 	got := maskConnectionPassword(raw)

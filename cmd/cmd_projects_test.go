@@ -23,27 +23,7 @@ package cli
 
 import (
 	"testing"
-
-	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
 )
-
-func TestSummarizeProjects(t *testing.T) {
-	got := summarizeProjects([]volcengine.Workspace{
-		{ProjectName: "gongna"},
-		{ProjectName: "default"},
-		{ProjectName: "gongna"},
-		{ProjectName: ""},
-	})
-	if len(got) != 2 {
-		t.Fatalf("summarizeProjects() returned %d projects, want 2", len(got))
-	}
-	if got[0].ProjectName != "default" || got[0].WorkspaceCount != 1 {
-		t.Fatalf("first project = %+v, want default/1", got[0])
-	}
-	if got[1].ProjectName != "gongna" || got[1].WorkspaceCount != 2 {
-		t.Fatalf("second project = %+v, want gongna/2", got[1])
-	}
-}
 
 func TestProjectsListIsRegistered(t *testing.T) {
 	cmd := newRootCmd()

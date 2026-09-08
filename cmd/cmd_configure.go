@@ -45,8 +45,18 @@ func newConfigureCmd(ctx ProviderContext) *cobra.Command {
 Access uses a static Access Key / Secret Key pair. Configure a
 profile once with ` + "`configure set`" + `, or supply credentials per invocation via the
 ` + volcengine.AccessKeyEnvironment(provider) + ` and ` + volcengine.SecretKeyEnvironment(provider) + ` environment variables.`,
+		Example: "byted-postgresql-cli configure set --profile default " +
+			"--access-key <access-key> --secret-key <secret-key> --region cn-beijing",
 	}
-	cmd.AddCommand(newConfigureSetCmd(provider), newConfigureGetCmd(provider), newConfigureListCmd(provider))
+	cmd.AddCommand(
+		newConfigureSetCmd(provider),
+		newConfigureGetCmd(provider),
+		newConfigureListCmd(provider),
+		newConfigureProfileCmd(provider),
+		newConfigureRegionCmd(provider),
+		newConfigureAgentPlanCmd(provider),
+		newConfigureDeleteCmd(provider),
+	)
 	return cmd
 }
 
@@ -126,6 +136,220 @@ func newConfigureSetCmd(providers ...volcengine.Provider) *cobra.Command {
 	return cmd
 }
 
+func newConfigureProfileCmd(providers ...volcengine.Provider) *cobra.Command {
+	provider := providerForCommandTree()
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
+	cmd := &cobra.Command{
+		Use:   "profile <name>",
+		Short: "Switch the current Volcengine profile",
+		Args:  configureRequiredArg("profile", "name"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			cfg, err := volcengine.LoadFileConfigFor(provider)
+			if err != nil {
+				return err
+			}
+			if cfg.Profiles[name] == nil {
+				return fmt.Errorf("Volcengine profile %q not found", name)
+			}
+			cfg.Current = name
+			if err := volcengine.SaveFileConfigFor(provider, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Switched to Volcengine profile %q.\n", name)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newConfigureRegionCmd(providers ...volcengine.Provider) *cobra.Command {
+	var profileName string
+	provider := providerForCommandTree()
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
+	cmd := &cobra.Command{
+		Use:   "region <region>",
+		Short: "Update the default region of a Volcengine profile",
+		Args:  configureRequiredArg("region", "region"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			region := strings.TrimSpace(args[0])
+			if err := volcengine.ValidateProviderRegion(provider, region); err != nil {
+				return err
+			}
+			cfg, err := volcengine.LoadFileConfigFor(provider)
+			if err != nil {
+				return err
+			}
+			name := profileName
+			if name == "" {
+				name = cfg.Current
+			}
+			profile := cfg.Profiles[name]
+			if profile == nil {
+				return fmt.Errorf("Volcengine profile %q not found", name)
+			}
+			profile.Region = region
+			if err := volcengine.SaveFileConfigFor(provider, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Updated Volcengine profile %q region to %q.\n", name, region)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&profileName, "profile", "", "Profile name (defaults to the current profile)")
+	return cmd
+}
+
+func configureRequiredArg(commandName, argumentName string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		usage := fmt.Sprintf("use `%s <%s>`", cmd.CommandPath(), argumentName)
+		switch len(args) {
+		case 0:
+			return fmt.Errorf("%s is required; %s", argumentName, usage)
+		case 1:
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("%s cannot be empty; %s", argumentName, usage)
+			}
+			return nil
+		default:
+			return fmt.Errorf("%s accepts exactly one %s; %s", commandName, argumentName, usage)
+		}
+	}
+}
+
+func newConfigureAgentPlanCmd(providers ...volcengine.Provider) *cobra.Command {
+	var (
+		isAgentPlan bool
+		seatID      string
+	)
+	provider := providerForCommandTree()
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
+	cmd := &cobra.Command{
+		Use:   "agent-plan",
+		Short: "Update Agent Plan defaults for a Volcengine profile",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("is-agent-plan") && !cmd.Flags().Changed("agent-plan-seat-id") {
+				return fmt.Errorf("supply --is-agent-plan or --agent-plan-seat-id")
+			}
+			seatID = strings.TrimSpace(seatID)
+			cfg, err := volcengine.LoadFileConfigFor(provider)
+			if err != nil {
+				return err
+			}
+			name := fromCtx(cmd).Profile
+			if name == "" {
+				name = cfg.Current
+			}
+			profile := cfg.Profiles[name]
+			if profile == nil {
+				return fmt.Errorf("Volcengine profile %q not found", name)
+			}
+			if err := updateAgentPlanProfile(
+				profile,
+				cmd.Flags().Changed("is-agent-plan"),
+				isAgentPlan,
+				cmd.Flags().Changed("agent-plan-seat-id"),
+				seatID,
+			); err != nil {
+				return err
+			}
+			if err := volcengine.SaveFileConfigFor(provider, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Updated Agent Plan defaults for Volcengine profile %q.\n", name)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&isAgentPlan, "is-agent-plan", false, "Use Agent Plan by default for this profile")
+	cmd.Flags().StringVar(&seatID, "agent-plan-seat-id", "", "Default Agent Plan seat ID for enterprise edition")
+	return cmd
+}
+
+func updateAgentPlanProfile(
+	profile *volcengine.Profile,
+	isAgentPlanChanged bool,
+	isAgentPlan bool,
+	seatIDChanged bool,
+	seatID string,
+) error {
+	if seatID != "" && isAgentPlanChanged && !isAgentPlan {
+		return fmt.Errorf("--is-agent-plan=false cannot be combined with a non-empty --agent-plan-seat-id")
+	}
+	if isAgentPlanChanged {
+		profile.IsAgentPlan = isAgentPlan
+		if !isAgentPlan && !seatIDChanged {
+			profile.AgentPlanSeatID = ""
+		}
+	}
+	if seatIDChanged {
+		profile.AgentPlanSeatID = seatID
+		if seatID != "" {
+			profile.IsAgentPlan = true
+		}
+	}
+	return nil
+}
+
+func newConfigureDeleteCmd(providers ...volcengine.Provider) *cobra.Command {
+	var profileName string
+	var assumeYes bool
+	provider := providerForCommandTree()
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
+	cmd := &cobra.Command{
+		Use:   "delete [name]",
+		Short: "Delete a Volcengine profile",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := volcengine.LoadFileConfigFor(provider)
+			if err != nil {
+				return err
+			}
+			name := profileName
+			if len(args) == 1 {
+				name = strings.TrimSpace(args[0])
+			}
+			if name == "" {
+				name = cfg.Current
+			}
+			if cfg.Profiles[name] == nil {
+				return fmt.Errorf("Volcengine profile %q not found", name)
+			}
+			if !assumeYes {
+				return fmt.Errorf("pass --yes to delete Volcengine profile %q", name)
+			}
+			delete(cfg.Profiles, name)
+			if cfg.Current == name {
+				cfg.Current = "default"
+				names := make([]string, 0, len(cfg.Profiles))
+				for candidate := range cfg.Profiles {
+					names = append(names, candidate)
+				}
+				sort.Strings(names)
+				if len(names) > 0 {
+					cfg.Current = names[0]
+				}
+			}
+			if err := volcengine.SaveFileConfigFor(provider, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Deleted Volcengine profile %q.\n", name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&profileName, "profile", "", "Profile name (defaults to the current profile)")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Confirm profile deletion")
+	return cmd
+}
+
 func newConfigureGetCmd(providers ...volcengine.Provider) *cobra.Command {
 	var profileName string
 	provider := providerForCommandTree()
@@ -186,20 +410,23 @@ func newConfigureListCmd(providers ...volcengine.Provider) *cobra.Command {
 				items = append(items, item)
 			}
 			g := fromCtx(cmd)
-			return g.Writer().WriteList(items, []string{"current", "profile", "access_key", "region", "endpoint"})
+			return g.Writer().WriteList(items, []string{"current", "profile", "mode", "access_key", "region", "endpoint", "is_agent_plan", "agent_plan_seat_id"})
 		},
 	}
 }
 
 func configureProfileFields(profile *volcengine.Profile, isCurrent bool) (map[string]string, []string) {
 	item := map[string]string{
-		"profile":    profile.Name,
-		"access_key": maskSecret(profile.AccessKey),
-		"region":     profile.Region,
-		"endpoint":   profile.Endpoint,
-		"current":    boolLabel(isCurrent),
+		"profile":            profile.Name,
+		"access_key":         maskSecret(profile.AccessKey),
+		"region":             profile.Region,
+		"endpoint":           profile.Endpoint,
+		"mode":               profile.Mode,
+		"is_agent_plan":      boolLabel(profile.IsAgentPlan),
+		"agent_plan_seat_id": maskSecret(profile.AgentPlanSeatID),
+		"current":            boolLabel(isCurrent),
 	}
-	fields := []string{"profile", "current", "access_key", "region", "endpoint"}
+	fields := []string{"profile", "current", "mode", "access_key", "region", "endpoint", "is_agent_plan", "agent_plan_seat_id"}
 	return item, fields
 }
 

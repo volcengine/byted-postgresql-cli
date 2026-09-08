@@ -53,7 +53,7 @@ Supports three modes:
 The region is used as the default region for subsequent API calls.
 Use --skip-region to authenticate without saving a profile region.`,
 		Example: `  byted-postgresql-cli login
-  byted-postgresql-cli login --profile dev --region cn-beijing
+  byted-postgresql-cli login --region cn-beijing
   byted-postgresql-cli login --remote
   byted-postgresql-cli login --credential-file /path/to/cache.json`,
 		Args: cobra.NoArgs,

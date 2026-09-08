@@ -132,18 +132,17 @@ directories with normal user-only filesystem permissions.
 Use explicit resource IDs in automation:
 
 ```bash
-CLI=byted-postgresql-cli
 
-$CLI --region cn-beijing workspaces list
-$CLI --region cn-beijing workspaces get <workspace-id>
-$CLI --region cn-beijing branches list --workspace-id <workspace-id>
-$CLI --region cn-beijing computes list \
+byted-postgresql-cli  workspaces list
+byted-postgresql-cli  workspaces get <workspace-id>
+byted-postgresql-cli  branches list --workspace-id <workspace-id>
+byted-postgresql-cli  computes list \
   --workspace-id <workspace-id> \
   --branch-id <branch-id>
-$CLI --region cn-beijing databases list \
+byted-postgresql-cli cn-beijing databases list \
   --workspace-id <workspace-id> \
   --branch-id <branch-id>
-$CLI --region cn-beijing roles list \
+byted-postgresql-cli cn-beijing roles list \
   --workspace-id <workspace-id> \
   --branch-id <branch-id>
 ```
@@ -154,7 +153,7 @@ List commands use pagination. The default page is limited to 10 items; use
 Get a PostgreSQL connection string:
 
 ```bash
-$CLI --region cn-beijing connection-string \
+byted-postgresql-cli connection-string \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
@@ -170,7 +169,7 @@ history.
 Preview a dump command without executing `pg_dump`:
 
 ```bash
-$CLI --region cn-beijing db dump --dry-run \
+byted-postgresql-cli db dump --dry-run \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
@@ -184,7 +183,7 @@ To preview a complete command with the real password, use `--reveal`. This
 prints sensitive data to stdout:
 
 ```bash
-$CLI --region cn-beijing db dump --dry-run --reveal \
+byted-postgresql-cli db dump --dry-run --reveal \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
@@ -194,7 +193,7 @@ $CLI --region cn-beijing db dump --dry-run --reveal \
 To execute a dump directly, omit `--dry-run` and write the output to a file:
 
 ```bash
-$CLI --region cn-beijing db dump \
+byted-postgresql-cli db dump \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
@@ -209,7 +208,7 @@ The `--reveal` and `--masked` flags are only valid with `--dry-run`.
 Start the MCP server over stdio:
 
 ```bash
-$CLI --region cn-beijing mcp serve \
+byted-postgresql-cli mcp serve \
   --workspace-id <workspace-id> \
   --read-only
 ```

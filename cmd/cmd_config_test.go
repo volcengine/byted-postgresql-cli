@@ -24,6 +24,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
 )
 
 func TestConfigHelpHidesAPIHostCommand(t *testing.T) {
@@ -47,5 +49,47 @@ func TestConfigRejectsUnknownCommand(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), `unknown command "apihost"`) {
 		t.Fatalf("config apihost error = %v, want unknown command error", err)
+	}
+}
+
+func TestConfigureIncludesAgentPlanCommand(t *testing.T) {
+	cmd := newRootCmd()
+	found, _, err := cmd.Find([]string{"configure", "agent-plan"})
+	if err != nil || found == nil {
+		t.Fatalf("configure agent-plan is not registered: %v", err)
+	}
+	if found.LocalNonPersistentFlags().Lookup("profile") != nil {
+		t.Fatal("configure agent-plan must use the root persistent --profile flag")
+	}
+}
+
+func TestUpdateAgentPlanProfileDisablesAndClearsSeat(t *testing.T) {
+	profile := &volcengine.Profile{
+		IsAgentPlan:     true,
+		AgentPlanSeatID: "seat-old",
+	}
+	if err := updateAgentPlanProfile(profile, true, false, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if profile.IsAgentPlan || profile.AgentPlanSeatID != "" {
+		t.Fatalf("profile = %+v, want Agent Plan disabled with empty seat ID", profile)
+	}
+}
+
+func TestUpdateAgentPlanProfileRejectsDisabledNonEmptySeat(t *testing.T) {
+	profile := &volcengine.Profile{IsAgentPlan: true, AgentPlanSeatID: "seat-old"}
+	err := updateAgentPlanProfile(profile, true, false, true, "seat-new")
+	if err == nil || !strings.Contains(err.Error(), "--is-agent-plan=false") {
+		t.Fatalf("error = %v, want disabled Agent Plan conflict", err)
+	}
+}
+
+func TestUpdateAgentPlanProfileEnablesSeat(t *testing.T) {
+	profile := &volcengine.Profile{}
+	if err := updateAgentPlanProfile(profile, false, false, true, "seat-new"); err != nil {
+		t.Fatal(err)
+	}
+	if !profile.IsAgentPlan || profile.AgentPlanSeatID != "seat-new" {
+		t.Fatalf("profile = %+v, want Agent Plan enabled with seat-new", profile)
 	}
 }

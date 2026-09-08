@@ -308,6 +308,17 @@ func TestRunConsoleLogoutRejectsAKProfile(t *testing.T) {
 	}
 }
 
+func TestRunConsoleLogoutMissingProfileIsIdempotent(t *testing.T) {
+	isolateConfig(t)
+	var output strings.Builder
+	if err := RunConsoleLogout(ConsoleLogoutParams{Profile: "default"}, &output); err != nil {
+		t.Fatalf("RunConsoleLogout missing profile: %v", err)
+	}
+	if !strings.Contains(output.String(), "Nothing to do") {
+		t.Fatalf("output = %q, want no-op message", output.String())
+	}
+}
+
 func TestExtractLoginSession(t *testing.T) {
 	trn := "trn:iam::999:user/example"
 	got, err := extractLoginSession(makeIDToken(t, trn))

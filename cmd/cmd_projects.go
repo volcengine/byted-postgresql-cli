@@ -22,18 +22,12 @@
 package cli
 
 import (
-	"sort"
-
 	"github.com/spf13/cobra"
-
-	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
 )
 
-var projectFields = []string{"ProjectName", "WorkspaceCount"}
-
-type projectSummary struct {
-	ProjectName    string `json:"ProjectName" yaml:"ProjectName"`
-	WorkspaceCount int    `json:"WorkspaceCount" yaml:"WorkspaceCount"`
+var projectFields = []string{
+	"AccountID", "ProjectName", "ParentProjectName", "Path", "DisplayName",
+	"Description", "CreateDate", "UpdateDate", "Status", "HasPermission",
 }
 
 func newProjectsCmd(ctx ProviderContext) *cobra.Command {
@@ -43,7 +37,7 @@ func newProjectsCmd(ctx ProviderContext) *cobra.Command {
 	}
 	list := &cobra.Command{
 		Use:   "list",
-		Short: "List projects and their workspace counts",
+		Short: "List resource projects",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
@@ -51,38 +45,13 @@ func newProjectsCmd(ctx ProviderContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.ListAllWorkspaces(cmd.Context(), volcengine.ListWorkspacesParams{
-				Limit: volcengine.MaxPageLimit,
-			})
+			projects, err := client.ListResourceProjects(cmd.Context())
 			if err != nil {
 				return err
 			}
-			summaries := summarizeProjects(result.Workspaces)
-			return g.Writer().WriteList(summaries, projectFields)
+			return g.Writer().WriteList(projects.Projects, projectFields)
 		},
 	}
 	cmd.AddCommand(list)
 	return cmd
-}
-
-func summarizeProjects(workspaces []volcengine.Workspace) []projectSummary {
-	counts := make(map[string]int)
-	for _, workspace := range workspaces {
-		if workspace.ProjectName != "" {
-			counts[workspace.ProjectName]++
-		}
-	}
-	names := make([]string, 0, len(counts))
-	for name := range counts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	summaries := make([]projectSummary, 0, len(names))
-	for _, name := range names {
-		summaries = append(summaries, projectSummary{
-			ProjectName:    name,
-			WorkspaceCount: counts[name],
-		})
-	}
-	return summaries
 }

@@ -75,12 +75,12 @@ export VOLCENGINE_REGION='cn-beijing'
 ```bash
 CLI=byted-postgresql-cli
 
-$CLI --region cn-beijing workspaces list
-$CLI --region cn-beijing branches list --workspace-id <workspace-id>
-$CLI --region cn-beijing computes list \
+byted-postgresql-cli workspaces list
+byted-postgresql-cli branches list --workspace-id <workspace-id>
+byted-postgresql-cli computes list \
   --workspace-id <workspace-id> \
   --branch-id <branch-id>
-$CLI --region cn-beijing databases list \
+byted-postgresql-cli databases list \
   --workspace-id <workspace-id> \
   --branch-id <branch-id>
 ```
@@ -93,7 +93,7 @@ $CLI --region cn-beijing databases list \
 获取脱敏连接串：
 
 ```bash
-$CLI --region cn-beijing connection-string \
+byted-postgresql-cli connection-string \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
@@ -103,14 +103,14 @@ $CLI --region cn-beijing connection-string \
 执行 SQL、进入 `psql`、导出数据库和拉取 Schema：
 
 ```bash
-$CLI --region cn-beijing db query \
+byted-postgresql-cli db query \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
   --role-name <role-name> \
   --sql 'select now()'
 
-$CLI --region cn-beijing db dump --dry-run \
+byted-postgresql-cli db dump --dry-run \
   --workspace-id <workspace-id> \
   --branch-id <branch-id> \
   --database-name <database-name> \
@@ -125,7 +125,7 @@ $CLI --region cn-beijing db dump --dry-run \
 通过 stdio 启动 MCP Server：
 
 ```bash
-$CLI --region cn-beijing mcp serve \
+byted-postgresql-cli mcp serve \
   --workspace-id <workspace-id> \
   --read-only
 ```

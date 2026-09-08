@@ -484,7 +484,8 @@ func RunConsoleLogout(params ConsoleLogoutParams, output io.Writer) error {
 	}
 	profile, ok := cfg.Profiles[profileName]
 	if !ok || profile == nil {
-		return fmt.Errorf("profile %q not found in configuration", profileName)
+		fmt.Fprintf(output, "Profile %q was not found in configuration. Nothing to do.\n", profileName)
+		return nil
 	}
 	if profile.Mode != ModeConsoleLogin {
 		return fmt.Errorf("profile %q is using %q mode, not %q mode. Only console-login profiles can be logged out with this command", profileName, profile.Mode, ModeConsoleLogin)

@@ -52,6 +52,9 @@ const (
 	DefaultListLimit = pagination.DefaultLimit
 	// InteractiveListLimit is the page size used by interactive resource pickers.
 	InteractiveListLimit = 20
+	// MaxAllPages prevents malformed backend totals or pagination state from
+	// causing unbounded collection loops.
+	MaxAllPages = 10000
 
 	deletionProtectionEnabled  = "Enabled"
 	deletionProtectionDisabled = "Disabled"
@@ -65,6 +68,10 @@ const (
 	ServiceTypeDatabase = "Database"
 	// ComputeRolePrimary marks the read-write compute of a branch.
 	ComputeRolePrimary = "Primary"
+	// ComputeRoleReadOnly creates a read-only PostgreSQL replica compute.
+	ComputeRoleReadOnly = "ReadOnly"
+	// ComputeRoleAnalytic creates a DuckDB analytic compute.
+	ComputeRoleAnalytic = "Analytic"
 
 	// ACL types and modify modes for the network allow-list API.
 	ACLTypeAllow        = "Allow"
@@ -72,6 +79,26 @@ const (
 	ACLModifyModeAppend = "Append"
 	ACLModifyModeDelete = "Delete"
 )
+
+func normalizePageLimit(limit int) (int, error) {
+	if limit < 0 {
+		return 0, fmt.Errorf("limit must be greater than or equal to 0, got %d", limit)
+	}
+	if limit == 0 {
+		return DefaultListLimit, nil
+	}
+	if limit > MaxPageLimit {
+		return MaxPageLimit, nil
+	}
+	return limit, nil
+}
+
+func validatePageOffset(offset int) error {
+	if offset < 0 {
+		return fmt.Errorf("offset must be greater than or equal to 0, got %d", offset)
+	}
+	return nil
+}
 
 // remarshal decodes a Volcengine AIDAP gateway response (returned by the SDK as
 // map[string]interface{}, since the generator leaves result schemas untyped)

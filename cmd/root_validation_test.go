@@ -22,11 +22,30 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
+
+func TestShouldShowRequiredHelp(t *testing.T) {
+	for _, message := range []string{
+		`required flag(s) "name" not set`,
+		"--branch-id is required",
+		"--min-cu and --max-cu must be provided together",
+		"SQL is required; pass it as an argument or with --file",
+		"no workspace selected",
+		"no branch selected",
+	} {
+		if !shouldShowRequiredHelp(errors.New(message)) {
+			t.Fatalf("shouldShowRequiredHelp(%q) = false, want true", message)
+		}
+	}
+	if shouldShowRequiredHelp(errors.New("invalid region")) {
+		t.Fatal("shouldShowRequiredHelp(invalid region) = true, want false")
+	}
+}
 
 func TestValidatePaginationFlags(t *testing.T) {
 	for _, value := range []string{"-1", "-10"} {

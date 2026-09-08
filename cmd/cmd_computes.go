@@ -23,6 +23,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -42,9 +43,6 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 		Short:   "Manage PostgreSQL computes",
 	}
 	var workspaceID, branchID, serviceType string
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
-	cmd.PersistentFlags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
-	cmd.PersistentFlags().StringVar(&serviceType, "service-type", "", "Compute service type")
 
 	resolve := func(cmd *cobra.Command) (*volcengine.Client, string, string, error) {
 		g := fromCtx(cmd)
@@ -63,6 +61,7 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List computes",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, wsID, bid, err := resolve(cmd)
@@ -80,11 +79,18 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 	cmd.AddCommand(list)
 
 	get := &cobra.Command{
-		Use:   "get <compute-id>",
+		Use:   "get --compute-id <compute-id>",
 		Short: "Get a compute",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			computeID, err := cmd.Flags().GetString("compute-id")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(computeID) == "" {
+				return fmt.Errorf("--compute-id is required")
+			}
 			client, err := g.NewVolcClient(cmd.Context())
 			if err != nil {
 				return err
@@ -93,22 +99,31 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			compute, err := client.DescribeComputeDetail(cmd.Context(), workspace, args[0])
+			compute, err := client.DescribeComputeDetail(cmd.Context(), workspace, computeID)
 			if err != nil {
 				return err
 			}
 			return g.Writer().WriteItem(compute, computeFields)
 		},
 	}
+	get.Flags().String("compute-id", "", "Compute ID (required)")
 	cmd.AddCommand(get)
 
-	var name, role string
+	var name, computeType string
 	var minCU, maxCU float64
 	create := &cobra.Command{
 		Use:   "create",
-		Short: "Create a compute",
+		Short: "Create a read-only or DuckDB compute",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			computeType = strings.TrimSpace(computeType)
+			if err := validateComputeType(computeType); err != nil {
+				return err
+			}
+			if err := validateComputeCreateUnits(cmd, minCU, maxCU); err != nil {
+				return err
+			}
 			_, wsID, bid, err := resolve(cmd)
 			if err != nil {
 				return err
@@ -118,7 +133,7 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 				return err
 			}
 			compute, err := client.CreateCompute(cmd.Context(), volcengine.CreateComputeParams{
-				WorkspaceID: wsID, BranchID: bid, ComputeName: name, ComputeRole: role,
+				WorkspaceID: wsID, BranchID: bid, ComputeName: name, ComputeRole: computeType,
 				AutoScalingLimitMinCU: minCU, AutoScalingLimitMaxCU: maxCU,
 			})
 			if err != nil {
@@ -128,20 +143,28 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 		},
 	}
 	create.Flags().StringVar(&name, "name", "", "Compute name")
-	create.Flags().StringVar(&role, "role", "Primary", "Compute role: Primary or ReadOnly")
-	create.Flags().Float64Var(&minCU, "min-cu", 0, "Minimum compute units (0.25-32)")
-	create.Flags().Float64Var(&maxCU, "max-cu", 0, "Maximum compute units (0.25-32, at most 8x --min-cu)")
+	create.Flags().StringVar(&computeType, "type", "", "Compute type: ReadOnly or Analytic (DuckDB)")
+	create.Flags().Float64Var(&minCU, "min-cu", 0, "Minimum compute units (0.25-2)")
+	create.Flags().Float64Var(&maxCU, "max-cu", 0, "Maximum compute units (0.25-2)")
 	_ = create.MarkFlagRequired("name")
+	_ = create.MarkFlagRequired("type")
 	cmd.AddCommand(create)
 
 	var yes bool
 	del := &cobra.Command{
-		Use:     "delete <compute-id>",
+		Use:     "delete --compute-id <compute-id>",
 		Aliases: []string{"rm"},
 		Short:   "Delete a compute",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			computeID, err := cmd.Flags().GetString("compute-id")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(computeID) == "" {
+				return fmt.Errorf("--compute-id is required")
+			}
 			client, err := g.NewVolcClient(cmd.Context())
 			if err != nil {
 				return err
@@ -151,50 +174,66 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 				return err
 			}
 			if !yes {
-				summary := fmt.Sprintf("Delete compute %q? This operation cannot be undone.", args[0])
-				if err := confirmDestructiveAction(cmd, args[0], summary, "delete"); err != nil {
+				summary := fmt.Sprintf("Delete compute %q? This operation cannot be undone.", computeID)
+				if err := confirmDestructiveAction(cmd, computeID, summary, "delete"); err != nil {
 					return err
 				}
 			}
-			if err := client.DeleteCompute(cmd.Context(), workspace, args[0]); err != nil {
+			if err := client.DeleteCompute(cmd.Context(), workspace, computeID); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Compute %s deleted\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Compute %s deleted\n", computeID)
 			return nil
 		},
 	}
+	del.Flags().String("compute-id", "", "Compute ID (required)")
 	del.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
 	cmd.AddCommand(del)
 
 	restart := &cobra.Command{
-		Use:   "restart <compute-id>",
+		Use:   "restart --compute-id <compute-id>",
 		Short: "Restart the branch containing a compute",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			computeID, err := cmd.Flags().GetString("compute-id")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(computeID) == "" {
+				return fmt.Errorf("--compute-id is required")
+			}
 			client, wsID, bid, err := resolve(cmd)
 			if err != nil {
 				return err
 			}
 			if _, err := client.RestartBranch(cmd.Context(), volcengine.RestartBranchParams{
-				WorkspaceID: wsID, BranchID: bid, ComputeIDs: []string{args[0]},
+				WorkspaceID: wsID, BranchID: bid, ComputeIDs: []string{computeID},
 			}); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Compute %s restarting\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Compute %s restarting\n", computeID)
 			_ = g
 			return nil
 		},
 	}
+	restart.Flags().String("compute-id", "", "Compute ID (required)")
 	cmd.AddCommand(restart)
 
 	enableAP := &cobra.Command{
-		Use:   "enable-ap <compute-id>",
+		Use:   "enable-ap --compute-id <compute-id>",
 		Short: "Enable AP analytics acceleration for a compute",
-		Long:  "Enable AP (analytics acceleration) for a compute. This changes the compute's analytics policy; it does not create a separate compute.",
-		Args:  cobra.ExactArgs(1),
+		Long:  "This changes the compute's analytics policy; it does not create a separate compute.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
+			computeID, err := cmd.Flags().GetString("compute-id")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(computeID) == "" {
+				return fmt.Errorf("--compute-id is required")
+			}
 			client, err := g.NewVolcClient(cmd.Context())
 			if err != nil {
 				return err
@@ -203,17 +242,25 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return client.ModifyComputeAnalyticPolicy(cmd.Context(), workspace, args[0])
+			return client.ModifyComputeAnalyticPolicy(cmd.Context(), workspace, computeID)
 		},
 	}
+	enableAP.Flags().String("compute-id", "", "Compute ID (required)")
 	cmd.AddCommand(enableAP)
 
 	var updateName string
 	var updateMin, updateMax float64
 	update := &cobra.Command{
-		Use: "update <compute-id>", Short: "Update compute name or scaling limits",
-		Args: cobra.ExactArgs(1),
+		Use: "update --compute-id <compute-id>", Short: "Update compute name or scaling limits",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			computeID, err := cmd.Flags().GetString("compute-id")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(computeID) == "" {
+				return fmt.Errorf("--compute-id is required")
+			}
 			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("min-cu") && !cmd.Flags().Changed("max-cu") {
 				return fmt.Errorf("nothing to update; pass --name, --min-cu, or --max-cu")
 			}
@@ -227,7 +274,7 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 				return err
 			}
 			if cmd.Flags().Changed("min-cu") || cmd.Flags().Changed("max-cu") {
-				current, err := client.DescribeComputeDetail(cmd.Context(), workspace, args[0])
+				current, err := client.DescribeComputeDetail(cmd.Context(), workspace, computeID)
 				if err != nil {
 					return err
 				}
@@ -238,25 +285,57 @@ func newComputesCmd(ctx ProviderContext) *cobra.Command {
 					updateMax = current.AutoScalingLimitMaxCU
 				}
 				if _, err := client.ModifyComputeSpec(cmd.Context(), volcengine.ModifyComputeSpecParams{
-					WorkspaceID: workspace, ComputeID: args[0], AutoScalingLimitMinCU: updateMin, AutoScalingLimitMaxCU: updateMax,
+					WorkspaceID: workspace, ComputeID: computeID, AutoScalingLimitMinCU: updateMin, AutoScalingLimitMaxCU: updateMax,
 				}); err != nil {
 					return err
 				}
 			}
 			if cmd.Flags().Changed("name") {
 				if err := client.ModifyComputeName(cmd.Context(), volcengine.ModifyComputeNameParams{
-					WorkspaceID: workspace, ComputeID: args[0], ComputeName: updateName,
+					WorkspaceID: workspace, ComputeID: computeID, ComputeName: updateName,
 				}); err != nil {
 					return err
 				}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Compute %s updated\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Compute %s updated\n", computeID)
 			return nil
 		},
 	}
 	update.Flags().StringVar(&updateName, "name", "", "New compute name")
 	update.Flags().Float64Var(&updateMin, "min-cu", 0, "New minimum compute units")
 	update.Flags().Float64Var(&updateMax, "max-cu", 0, "New maximum compute units")
+	update.Flags().String("compute-id", "", "Compute ID (required)")
 	cmd.AddCommand(update)
+	for _, child := range cmd.Commands() {
+		child.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID (required in non-interactive mode)")
+		child.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
+		child.Flags().StringVar(&serviceType, "service-type", "", "Compute service type")
+	}
 	return cmd
+}
+
+func validateComputeType(computeType string) error {
+	switch strings.TrimSpace(computeType) {
+	case volcengine.ComputeRoleReadOnly, volcengine.ComputeRoleAnalytic:
+		return nil
+	default:
+		return fmt.Errorf("--type must be %s (read-only) or %s (DuckDB), got %q",
+			volcengine.ComputeRoleReadOnly, volcengine.ComputeRoleAnalytic, computeType)
+	}
+}
+
+func validateComputeCreateUnits(cmd *cobra.Command, minCU, maxCU float64) error {
+	if !cmd.Flags().Changed("min-cu") || !cmd.Flags().Changed("max-cu") {
+		return fmt.Errorf("--min-cu and --max-cu are required")
+	}
+	if minCU < 0.25 || minCU > 2 {
+		return fmt.Errorf("--min-cu must be between 0.25 and 2 compute units, got %g", minCU)
+	}
+	if maxCU < 0.25 || maxCU > 2 {
+		return fmt.Errorf("--max-cu must be between 0.25 and 2 compute units, got %g", maxCU)
+	}
+	if maxCU < minCU {
+		return fmt.Errorf("--max-cu (%g) must be greater than or equal to --min-cu (%g)", maxCU, minCU)
+	}
+	return nil
 }

@@ -28,33 +28,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestBranchesChildrenUsesExplicitRequiredParentBranchFlag(t *testing.T) {
+func TestBranchesChildrenListUsesExplicitRequiredParentBranchFlag(t *testing.T) {
 	cmd := newBranchesChildrenCmd(func(*cobra.Command) (string, error) {
 		t.Fatal("workspace resolver should not run without the required parent branch")
 		return "", nil
 	})
-
-	if flag := cmd.Flags().Lookup("parent-branch-id"); flag == nil {
-		t.Fatal("children should define --parent-branch-id")
-	} else {
-		if flag.Usage != "Parent branch ID (required)" {
-			t.Fatalf("parent-branch-id usage = %q", flag.Usage)
-		}
+	list, _, err := cmd.Find([]string{"list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list == nil {
+		t.Fatal("children should define a list subcommand")
 	}
 
-	legacy := cmd.Flags().Lookup("parent-id")
-	if legacy == nil || !legacy.Hidden {
-		t.Fatal("--parent-id should remain as a hidden compatibility alias")
+	if flag := list.Flags().Lookup("parent-branch-id"); flag == nil {
+		t.Fatal("children list should expose --parent-branch-id")
+	} else if flag.Usage != "Parent branch ID (required)" {
+		t.Fatalf("parent-branch-id usage = %q", flag.Usage)
 	}
 
-	cmd.SetArgs(nil)
-	err := cmd.Execute()
+	err = list.RunE(list, nil)
 	if err == nil || !strings.Contains(err.Error(), "--parent-branch-id is required") {
 		t.Fatalf("missing parent branch error = %v", err)
 	}
 }
 
-func TestBranchesChildrenHelpUsesParentBranchFlag(t *testing.T) {
+func TestBranchesChildrenHelpUsesListSubcommand(t *testing.T) {
 	cmd := newBranchesChildrenCmd(func(*cobra.Command) (string, error) {
 		return "", nil
 	})
@@ -65,11 +64,23 @@ func TestBranchesChildrenHelpUsesParentBranchFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := output.String()
-	if !strings.Contains(help, "--parent-branch-id string") ||
-		!strings.Contains(help, "Parent branch ID (required)") {
-		t.Fatalf("children help does not explain the required flag:\n%s", help)
+	if !strings.Contains(help, "Available Commands:") ||
+		!strings.Contains(help, "list") {
+		t.Fatalf("children help does not show the list subcommand:\n%s", help)
 	}
-	if strings.Contains(help, "--parent-id") {
-		t.Fatalf("children help should not foreground the deprecated flag:\n%s", help)
+	list, _, err := cmd.Find([]string{"list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list == nil || list.Use != "list --parent-branch-id <branch-id>" {
+		t.Fatalf("children list command = %#v, want explicit list subcommand", list)
+	}
+	var listOutput strings.Builder
+	list.SetOut(&listOutput)
+	if err := list.Help(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listOutput.String(), "--parent-branch-id string") {
+		t.Fatalf("children list help does not explain the required flag:\n%s", listOutput.String())
 	}
 }

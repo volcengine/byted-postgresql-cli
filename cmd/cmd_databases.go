@@ -43,8 +43,6 @@ func newDatabasesCmd(ctx ProviderContext) *cobra.Command {
 	}
 
 	var workspaceID, branchID string
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID the branch belongs to")
-	cmd.PersistentFlags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
 
 	// resolve returns a client plus the resolved workspace/branch ids. An empty
 	// --branch-id falls back to the workspace's default branch.
@@ -70,6 +68,7 @@ func newDatabasesCmd(ctx ProviderContext) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List databases",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, wsID, bid, err := resolve(cmd)
@@ -95,7 +94,8 @@ func newDatabasesCmd(ctx ProviderContext) *cobra.Command {
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a database",
-		Long:  "Create a database using the branch's default database owner. Pass --role-name to choose a different branch role as the database owner.",
+		Long:  "The branch's default database owner is used when --role-name is omitted. Pass --role-name to choose a different branch role.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, wsID, bid, err := resolve(cmd)
@@ -129,30 +129,38 @@ func newDatabasesCmd(ctx ProviderContext) *cobra.Command {
 	cmd.AddCommand(create)
 
 	del := &cobra.Command{
-		Use:     "delete <name>",
+		Use:     "delete --name <name>",
 		Aliases: []string{"rm", "drop"},
 		Short:   "Delete a database",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("--name is required")
+			}
 			client, wsID, bid, err := resolve(cmd)
 			if err != nil {
 				return err
 			}
 			if !yes {
-				summary := fmt.Sprintf("Delete database %q? This operation cannot be undone.", args[0])
-				if err := confirmDestructiveAction(cmd, args[0], summary, "delete"); err != nil {
+				summary := fmt.Sprintf("Delete database %q? This operation cannot be undone.", name)
+				if err := confirmDestructiveAction(cmd, name, summary, "delete"); err != nil {
 					return err
 				}
 			}
-			if err := client.DropDatabase(cmd.Context(), wsID, bid, args[0]); err != nil {
+			if err := client.DropDatabase(cmd.Context(), wsID, bid, name); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Database %s deleted\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Database %s deleted\n", name)
 			return nil
 		},
 	}
+	del.Flags().StringVar(&name, "name", "", "Database name (required)")
 	del.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
 	cmd.AddCommand(del)
+	for _, child := range cmd.Commands() {
+		child.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID (required in non-interactive mode)")
+		child.Flags().StringVar(&branchID, "branch-id", "", "Branch ID (defaults to the workspace's default branch)")
+	}
 
 	return cmd
 }

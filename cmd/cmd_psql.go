@@ -38,26 +38,31 @@ func newPsqlCmd(ctx ProviderContext) *cobra.Command {
 		workspaceID, branchID, database, account string
 	)
 	cmd := &cobra.Command{
-		Use:   "psql [branch-id] [-- psql-args...]",
+		Use:   "psql [--branch-id <branch-id>] [-- psql-args...]",
 		Short: "Open a psql session for a branch",
 		Long: "Open a psql session for a branch.\n\n" +
 			"Database and role defaults are used only when the branch has a single unambiguous candidate. " +
 			"For multiple databases or roles, pass --database-name and --role-name; inspect candidates with " +
 			"`databases list` and `roles list`. The workspace's default branch is used when --branch-id is omitted. " +
 			"psql connects with the role password returned by the control plane.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if dashIdx := cmd.ArgsLenAtDash(); dashIdx >= 0 {
+				if dashIdx > 0 {
+					return fmt.Errorf("psql accepts no positional arguments; pass psql arguments after --")
+				}
+				return nil
+			}
+			if len(args) > 0 {
+				return fmt.Errorf("psql accepts no positional arguments; pass psql arguments after --")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
-			// Positional args before `--` are treated as the branch id; everything
-			// after `--` is forwarded to psql.
 			bid := branchID
 			var passThrough []string
 			if dashIdx := cmd.ArgsLenAtDash(); dashIdx >= 0 {
-				if bid == "" && dashIdx > 0 {
-					bid = args[0]
-				}
 				passThrough = args[dashIdx:]
-			} else if bid == "" && len(args) > 0 {
-				bid = args[0]
 			}
 			client, err := g.NewVolcClient(cmd.Context())
 			if err != nil {

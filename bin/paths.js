@@ -19,36 +19,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cli
+"use strict";
 
-import (
-	"github.com/spf13/cobra"
+import os from "node:os";
+import path from "node:path";
 
-	"github.com/volcengine/byted-postgresql-cli/internal/mcp"
-)
-
-func newMCPCmd(ctx ProviderContext) *cobra.Command {
-	var workspace string
-	var readOnly bool
-	serve := &cobra.Command{
-		Use:   "serve",
-		Short: "Start the PostgreSQL MCP server over stdio",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return mcp.Serve(cmd.Context(), ctx.Provider, mcp.Options{
-				WorkspaceID: firstNonEmpty(workspace, ""),
-				ReadOnly:    readOnly,
-			})
-		},
-	}
-	serve.Flags().StringVar(&workspace, "workspace-id", "", "Hard-scope tools to one workspace")
-	serve.Flags().BoolVar(&readOnly, "read-only", false, "Expose only read-only tools")
-	cmd := &cobra.Command{
-		Use:     "mcp",
-		Short:   "Model Context Protocol server for PostgreSQL",
-		Long:    "Start the PostgreSQL MCP server over stdio. Use the `serve` subcommand.",
-		Example: "byted-postgresql-cli mcp serve --workspace-id ws-xxx --read-only",
-	}
-	cmd.AddCommand(serve)
-	return cmd
-}
+export const DATA_ROOT_NAME = ".volcengine-postgresql";
+export const DATA_ROOT = path.join(os.homedir(), DATA_ROOT_NAME);
+export const CACHE_ROOT = path.join(DATA_ROOT, "cache");
+export const CONFIG_ROOT = path.join(DATA_ROOT, "config");

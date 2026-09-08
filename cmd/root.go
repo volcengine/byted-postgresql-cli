@@ -24,6 +24,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -54,6 +55,7 @@ const (
 type Globals struct {
 	ConfigDir string
 	Output    string
+	JSON      bool
 	Region    string
 	Profile   string
 	Provider  volcengine.Provider
@@ -103,6 +105,9 @@ func (g *Globals) ResolveBranch(explicit string) string {
 func Execute() error {
 	root := NewRootCommand(rootProviderContext())
 	executed, err := root.ExecuteC()
+	if shouldShowRequiredHelp(err) && executed != nil {
+		executed.HelpFunc()(executed, os.Args[1:])
+	}
 	if err == nil {
 		ctx := root.Context()
 		if executed != nil {
@@ -111,6 +116,27 @@ func Execute() error {
 		checkForUpgrade(ctx, executed)
 	}
 	return err
+}
+
+func shouldShowRequiredHelp(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"required flag(s)",
+		" is required",
+		" are required",
+		"must be provided",
+		"sql is required",
+		"no workspace selected",
+		"no branch selected",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func newRootCmd() *cobra.Command {
@@ -130,6 +156,8 @@ func NewRootCommand(providerContext ProviderContext) *cobra.Command {
 		SilenceErrors: true,
 		Version:       Version,
 	}
+	cmd.SetUsageTemplate(usageTemplate)
+	cmd.SetHelpTemplate(helpTemplate)
 	cmd.SetVersionTemplate("{{.Version}}\n")
 	cmd.SetHelpCommandGroupID(commandGroupTools)
 	cmd.SetCompletionCommandGroupID(commandGroupTools)
@@ -140,9 +168,13 @@ func NewRootCommand(providerContext ProviderContext) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&g.Region, "region", "", fmt.Sprintf("Volcengine region (defaults to $%s or the provider default)", volcengine.EnvRegion))
 	cmd.PersistentFlags().StringVar(&g.Profile, "profile", "", "Credential profile in the Volcengine configuration directory")
 	cmd.PersistentFlags().StringVarP(&g.Output, "output", "o", "table", "Set output format (table|json|yaml|csv|tsv)")
+	cmd.PersistentFlags().BoolVar(&g.JSON, "json", false, "Output structured results as JSON (shorthand for --output json)")
 	cmd.PersistentFlags().BoolVar(&g.Debug, "debug", false, "Enable debug logging")
 
 	cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if g.JSON {
+			g.Output = "json"
+		}
 		if err := writer.ValidateFormat(g.Output); err != nil {
 			return err
 		}

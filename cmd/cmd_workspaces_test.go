@@ -26,8 +26,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
 	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
 )
 
@@ -107,9 +105,9 @@ func TestWorkspacesFlagValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "create rejects a name given twice",
-			args:    []string{"workspaces", "create", "foo", "--name", "bar"},
-			wantErr: "given twice",
+			name:    "create rejects a positional name",
+			args:    []string{"workspaces", "create", "foo"},
+			wantErr: "unknown command",
 		},
 		{
 			name:    "create rejects an invalid name",
@@ -119,16 +117,16 @@ func TestWorkspacesFlagValidation(t *testing.T) {
 		{
 			name:    "create rejects a missing name",
 			args:    []string{"workspaces", "create"},
-			wantErr: "workspace name is required",
+			wantErr: `required flag(s) "name" not set`,
 		},
 		{
 			name:    "create rejects a blank name",
 			args:    []string{"workspaces", "create", "--name", "  "},
-			wantErr: "workspace name is required",
+			wantErr: "--name is required",
 		},
 		{
 			name:    "create rejects an out-of-range suspend timeout",
-			args:    []string{"workspaces", "create", "pg-demo", "--suspend-timeout", "5"},
+			args:    []string{"workspaces", "create", "--name", "pg-demo", "--suspend-timeout", "5"},
 			wantErr: "--suspend-timeout must be",
 		},
 		{
@@ -143,47 +141,47 @@ func TestWorkspacesFlagValidation(t *testing.T) {
 		},
 		{
 			name:    "delete refuses without confirmation",
-			args:    []string{"workspaces", "delete", "ws-1"},
+			args:    []string{"workspaces", "delete", "--workspace-id", "ws-1"},
 			wantErr: "pass --yes in non-interactive mode",
 		},
 		{
 			name:    "delete rejects an empty id",
-			args:    []string{"workspaces", "delete", "  "},
+			args:    []string{"workspaces", "delete", "--workspace-id", "  "},
 			wantErr: "workspace id cannot be empty",
 		},
 		{
 			name:    "rename requires a new name",
-			args:    []string{"workspaces", "rename", "ws-1"},
+			args:    []string{"workspaces", "rename", "--workspace-id", "ws-1"},
 			wantErr: "--name is required",
 		},
 		{
 			name:    "rename rejects an invalid new name",
-			args:    []string{"workspaces", "rename", "ws-1", "--name", "bad name"},
+			args:    []string{"workspaces", "rename", "--workspace-id", "ws-1", "--name", "bad name"},
 			wantErr: "may only contain",
 		},
 		{
 			name:    "deletion-protection requires a direction",
-			args:    []string{"workspaces", "deletion-protection", "ws-1"},
+			args:    []string{"workspaces", "deletion-protection", "--workspace-id", "ws-1"},
 			wantErr: "exactly one of --enable or --disable",
 		},
 		{
 			name:    "compute-settings requires something to change",
-			args:    []string{"workspaces", "compute-settings", "ws-1"},
+			args:    []string{"workspaces", "compute-settings", "--workspace-id", "ws-1"},
 			wantErr: "nothing to change",
 		},
 		{
 			name:    "compute-settings validates the suspend timeout",
-			args:    []string{"workspaces", "compute-settings", "ws-1", "--suspend-timeout", "10"},
+			args:    []string{"workspaces", "compute-settings", "--workspace-id", "ws-1", "--suspend-timeout", "10"},
 			wantErr: "--suspend-timeout must be",
 		},
 		{
 			name:    "settings requires something to change",
-			args:    []string{"workspaces", "settings", "ws-1"},
+			args:    []string{"workspaces", "settings", "--workspace-id", "ws-1"},
 			wantErr: "nothing to change",
 		},
 		{
 			name:    "settings validates the retention window",
-			args:    []string{"workspaces", "settings", "ws-1", "--history-retention-hours", "0"},
+			args:    []string{"workspaces", "settings", "--workspace-id", "ws-1", "--history-retention-hours", "0"},
 			wantErr: "--history-retention-hours must be between",
 		},
 	}
@@ -197,10 +195,10 @@ func TestWorkspacesFlagValidation(t *testing.T) {
 	}
 }
 
-func TestWorkspacesCreateExposesProjectName(t *testing.T) {
+func TestWorkspacesCreateExposesResourceProject(t *testing.T) {
 	cmd := newWorkspacesCreateCmd()
-	if cmd.Flags().Lookup("project-name") == nil {
-		t.Fatal("workspaces create should expose --project-name")
+	if cmd.Flags().Lookup("resource-project") == nil {
+		t.Fatal("workspaces create should expose --resource-project")
 	}
 }
 
@@ -223,53 +221,53 @@ func TestWorkspaceDeletionSummaryIncludesCascadeWarning(t *testing.T) {
 	}
 }
 
-// `workspaces create <name>` accepts a positional name as well as --name.
-func TestWorkspacesCreateAcceptsPositionalName(t *testing.T) {
+func TestWorkspacesCreateRequiresExplicitNameFlag(t *testing.T) {
 	cmd := newWorkspacesCreateCmd()
-	if err := cmd.Args(cmd, []string{"e2e-d"}); err != nil {
-		t.Fatalf("create must accept a positional name: %v", err)
+	if err := cmd.Args(cmd, []string{"e2e-d"}); err == nil {
+		t.Fatal("create must reject a positional workspace name")
 	}
-	values, ok := cmd.Flags().Lookup("name").Annotations[cobra.BashCompOneRequiredFlag]
-	if ok && len(values) > 0 && values[0] == "true" {
-		t.Fatal("--name must not be required")
+	if flag := cmd.Flags().Lookup("name"); flag == nil {
+		t.Fatal("create must expose --name")
 	}
 }
 
-func TestWorkspacesCreateHelpExplainsNameForms(t *testing.T) {
+func TestWorkspacesCreateHelpUsesNameFlag(t *testing.T) {
 	cmd := newWorkspacesCreateCmd()
-	help := cmd.Long
-	for _, want := range []string{
-		"these forms are equivalent",
-		"using both is an error",
-		"Whitespace-only values are rejected",
-	} {
-		if !strings.Contains(help, want) {
-			t.Fatalf("create help missing %q: %s", want, help)
-		}
+	if cmd.Flags().Lookup("name") == nil {
+		t.Fatal("create should expose --name")
 	}
 }
 
-func TestWorkspaceIDFromArgsAcceptsFlag(t *testing.T) {
+func TestWorkspaceIDFromFlagAcceptsFlag(t *testing.T) {
 	cmd := newWorkspacesGetCmd()
 	if err := cmd.Flags().Set("workspace-id", "ws-1"); err != nil {
 		t.Fatalf("set workspace-id: %v", err)
 	}
-	got, err := workspaceIDFromArgs(cmd, nil)
+	got, err := workspaceIDFromFlag(cmd)
 	if err != nil {
-		t.Fatalf("workspaceIDFromArgs() error = %v", err)
+		t.Fatalf("workspaceIDFromFlag() error = %v", err)
 	}
 	if got != "ws-1" {
-		t.Fatalf("workspaceIDFromArgs() = %q, want %q", got, "ws-1")
+		t.Fatalf("workspaceIDFromFlag() = %q, want %q", got, "ws-1")
 	}
 }
 
-func TestWorkspaceIDFromArgsRejectsDuplicateTargets(t *testing.T) {
+func TestWorkspaceIDFlagRejectsPositionalTarget(t *testing.T) {
 	cmd := newWorkspacesGetCmd()
-	if err := cmd.Flags().Set("workspace-id", "ws-flag"); err != nil {
-		t.Fatalf("set workspace-id: %v", err)
+	cmd.SetArgs([]string{"ws-positional"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown command") && !strings.Contains(err.Error(), "accepts 0 arg") {
+		t.Fatalf("positional workspace id error = %v, want positional argument rejection", err)
 	}
-	_, err := workspaceIDFromArgs(cmd, []string{"ws-positional"})
-	if err == nil || !strings.Contains(err.Error(), "given twice") {
-		t.Fatalf("workspaceIDFromArgs() error = %v, want duplicate target error", err)
+}
+
+func TestWorkspaceIDFromFlagRejectsMissingIDBeforeCredentialResolution(t *testing.T) {
+	cmd := newWorkspacesGetCmd()
+	_, err := workspaceIDFromFlag(cmd)
+	if err == nil || !strings.Contains(err.Error(), "no workspace selected") {
+		t.Fatalf("workspaceIDFromFlag() error = %v, want non-TTY workspace selection error", err)
+	}
+	if strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("workspaceIDFromFlag() resolved credentials before reporting missing workspace: %v", err)
 	}
 }

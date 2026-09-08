@@ -22,6 +22,7 @@
 package cli
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -40,5 +41,39 @@ func TestParseWorkspaceTags(t *testing.T) {
 	}
 	if _, err := parseWorkspaceTags([]string{"invalid"}); err == nil || !strings.Contains(err.Error(), "key=value") {
 		t.Fatalf("invalid tag error = %v", err)
+	}
+	if _, err := parseWorkspaceTags(nil); err == nil || err.Error() != "--tag is required" {
+		t.Fatalf("empty tag error = %v", err)
+	}
+}
+
+func TestWorkspaceTagsAddValidatesBeforeCreatingClient(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "workspace id",
+			args: []string{"tags", "add", "--tag", "env=test"},
+			want: "--workspace-id is required",
+		},
+		{
+			name: "tag",
+			args: []string{"tags", "add", "--workspace-id", "ws-1"},
+			want: "--tag is required",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := newRootCmd()
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			root.SetArgs(append([]string{"--config-dir", t.TempDir()}, testCase.args...))
+
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
 	}
 }

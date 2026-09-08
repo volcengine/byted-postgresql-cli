@@ -54,10 +54,9 @@ const (
 	maxRetentionHours     = 720
 )
 
-// workspaceIDFromArgs reads the positional workspace id, falling back to the
-// interactive picker when it is omitted — the behaviour promised by the root
-// command's help and already used by `branches`.
-func workspaceIDFromArgs(cmd *cobra.Command, args []string) (string, error) {
+// workspaceIDFromFlag reads the explicit workspace id flag, falling back to
+// the interactive picker when it is omitted.
+func workspaceIDFromFlag(cmd *cobra.Command) (string, error) {
 	flag := cmd.Flags().Lookup("workspace-id")
 	if flag != nil && flag.Changed {
 		workspaceID, err := cmd.Flags().GetString("workspace-id")
@@ -68,16 +67,10 @@ func workspaceIDFromArgs(cmd *cobra.Command, args []string) (string, error) {
 		if workspaceID == "" {
 			return "", fmt.Errorf("workspace id cannot be empty")
 		}
-		if len(args) > 0 {
-			return "", fmt.Errorf("workspace id given twice: as %q and as --workspace-id %q", args[0], workspaceID)
-		}
 		return workspaceID, nil
 	}
-	if len(args) > 0 {
-		if id := strings.TrimSpace(args[0]); id != "" {
-			return id, nil
-		}
-		return "", fmt.Errorf("workspace id cannot be empty")
+	if !interactiveTarget() {
+		return "", fmt.Errorf("no workspace selected\n\nRun:\n  byted-postgresql-cli workspaces list\n\nThen retry with:\n  --workspace-id <workspace-id>")
 	}
 	g := fromCtx(cmd)
 	client, err := g.NewVolcClient(cmd.Context())
@@ -210,6 +203,7 @@ func newWorkspacesListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List PostgreSQL workspaces",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, err := g.NewVolcClient(cmd.Context())
@@ -235,7 +229,7 @@ func newWorkspacesListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&search, "search", "", "Filter workspaces by name")
-	cmd.Flags().StringVar(&projectName, "project-name", "", "Filter workspaces by the project name they belong to")
+	cmd.Flags().StringVar(&projectName, "resource-project", "", "Volcengine account resource project")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum number of workspaces to return (default 10, 0=100, max 100)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Number of workspaces to skip")
 	cmd.Flags().BoolVar(&all, "all", false, "List every workspace (paginates through all pages)")
@@ -248,12 +242,12 @@ func newWorkspacesListCmd() *cobra.Command {
 
 func newWorkspacesGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "get [workspace-id]",
+		Use:   "get",
 		Short: "Get a workspace by id",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -268,7 +262,7 @@ func newWorkspacesGetCmd() *cobra.Command {
 			return g.Writer().WriteItem(ws, workspaceFields)
 		},
 	}
-	cmd.Flags().String("workspace-id", "", "Workspace ID (or pass it positionally)")
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	return cmd
 }
 
@@ -276,6 +270,8 @@ func newWorkspacesCreateCmd() *cobra.Command {
 	var (
 		name               string
 		projectName        string
+		isAgentPlan        bool
+		agentPlanSeatID    string
 		suspendTimeout     int
 		minCU              float64
 		maxCU              float64
@@ -288,26 +284,15 @@ func newWorkspacesCreateCmd() *cobra.Command {
 		tags               []string
 	)
 	cmd := &cobra.Command{
-		Use:   "create [name]",
-		Short: "Create a PostgreSQL workspace",
-		Long: "Create a PostgreSQL workspace.\n\n" +
-			"The name may be given positionally or with --name; these forms are equivalent. " +
-			"Pass exactly one form: using both is an error. Whitespace-only values are rejected.",
-		Example: "byted-postgresql-cli workspaces create my-pg",
-		Args:    cobra.MaximumNArgs(1),
+		Use:     "create --name <name>",
+		Short:   "Create a PostgreSQL workspace",
+		Example: "byted-postgresql-cli workspaces create --name my-pg",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
-			// A positional name is the shape people reach for first; accept it
-			// rather than silently dropping it and reporting a missing flag.
-			if len(args) > 0 {
-				if cmd.Flags().Changed("name") {
-					return fmt.Errorf("workspace name given twice: as %q and as --name %q", args[0], name)
-				}
-				name = args[0]
-			}
 			name = strings.TrimSpace(name)
 			if name == "" {
-				return fmt.Errorf("workspace name is required; pass it positionally or with --name")
+				return fmt.Errorf("workspace name is required; pass it with --name")
 			}
 			if err := validateWorkspaceName(name); err != nil {
 				return err
@@ -332,13 +317,27 @@ func newWorkspacesCreateCmd() *cobra.Command {
 			if deletionProtection != "" && deletionProtection != "Enabled" && deletionProtection != "Disabled" {
 				return fmt.Errorf("--deletion-protection must be Enabled or Disabled")
 			}
+			resolvedAgentPlan, resolvedAgentPlanSeatID, err := resolveWorkspaceAgentPlan(
+				cmd,
+				cmd.Flags().Changed("is-agent-plan"),
+				isAgentPlan,
+				cmd.Flags().Changed("agent-plan-seat-id"),
+				agentPlanSeatID,
+			)
+			if err != nil {
+				return err
+			}
 			client, err := g.NewVolcClient(cmd.Context())
 			if err != nil {
 				return err
 			}
 			params := volcengine.CreateWorkspaceParams{
-				WorkspaceName: name,
-				ProjectName:   projectName,
+				WorkspaceName:   name,
+				ProjectName:     projectName,
+				AgentPlanSeatID: resolvedAgentPlanSeatID,
+			}
+			if resolvedAgentPlan != nil {
+				params.IsAgentPlan = resolvedAgentPlan
 			}
 			if cmd.Flags().Changed("suspend-timeout") {
 				params.SuspendTimeoutSeconds = &suspendTimeout
@@ -374,7 +373,9 @@ func newWorkspacesCreateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&projectName, "project-name", "", "Project name for billing allocation")
+	cmd.Flags().StringVar(&projectName, "resource-project", "", "Volcengine account resource project")
+	cmd.Flags().BoolVar(&isAgentPlan, "is-agent-plan", false, "Create a personal Agent Plan workspace")
+	cmd.Flags().StringVar(&agentPlanSeatID, "agent-plan-seat-id", "", "Create an enterprise Agent Plan workspace with this seat ID")
 	cmd.Flags().IntVar(&suspendTimeout, "suspend-timeout", 0, "Auto-suspend timeout in seconds (-1 never suspends)")
 	cmd.Flags().Float64Var(&minCU, "min-cu", 0, "Initial minimum compute units (0.25-32)")
 	cmd.Flags().Float64Var(&maxCU, "max-cu", 0, "Initial maximum compute units (0.25-32, at most 8x --min-cu)")
@@ -385,23 +386,66 @@ func newWorkspacesCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&internetProtocol, "internet-protocol", "", "Internet protocol (IPv4 or DualStack)")
 	cmd.Flags().StringVar(&deletionProtection, "deletion-protection", "", "Deletion protection (Enabled or Disabled)")
 	cmd.Flags().StringSliceVar(&tags, "tag", nil, "Workspace tag key=value (repeatable)")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
+}
+
+func resolveWorkspaceAgentPlan(
+	cmd *cobra.Command,
+	isAgentPlanChanged bool,
+	isAgentPlan bool,
+	seatIDChanged bool,
+	seatID string,
+) (*bool, string, error) {
+	seatID = strings.TrimSpace(seatID)
+	if seatID != "" && isAgentPlanChanged && !isAgentPlan {
+		return nil, "", fmt.Errorf("--is-agent-plan=false cannot be combined with a non-empty --agent-plan-seat-id")
+	}
+	if seatID != "" {
+		enabled := true
+		return &enabled, seatID, nil
+	}
+	if isAgentPlanChanged {
+		return &isAgentPlan, "", nil
+	}
+	if seatIDChanged {
+		enabled := true
+		return &enabled, "", nil
+	}
+
+	provider := fromCtx(cmd).Provider
+	if provider == "" {
+		provider = volcengine.ProviderVolcengine
+	}
+	_, _, profile, err := volcengine.LoadSelectedProfileFor(provider)
+	if err != nil || profile == nil {
+		return nil, "", err
+	}
+	if profile.AgentPlanSeatID != "" {
+		enabled := true
+		return &enabled, strings.TrimSpace(profile.AgentPlanSeatID), nil
+	}
+	if profile.IsAgentPlan {
+		enabled := true
+		return &enabled, "", nil
+	}
+	return nil, "", nil
 }
 
 func newWorkspacesDeleteCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:     "delete <workspace-id>",
+		Use:     "delete",
 		Aliases: []string{"rm"},
 		Short:   "Delete a workspace",
 		// Unlike the other subcommands this one does not fall back to the
 		// interactive picker: a destructive call must name its target.
-		Args: cobra.ExactArgs(1),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
-			workspaceID := strings.TrimSpace(args[0])
-			if workspaceID == "" {
-				return fmt.Errorf("workspace id cannot be empty")
+			workspaceID, err := workspaceIDFromFlag(cmd)
+			if err != nil {
+				return err
 			}
 			if !yes {
 				summary := fmt.Sprintf("Delete workspace %q? This operation cannot be undone.", workspaceID)
@@ -431,18 +475,19 @@ func newWorkspacesDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
 	return cmd
 }
 
 func newWorkspacesStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "start [workspace-id]",
+		Use:   "start",
 		Short: "Start a stopped workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -457,18 +502,19 @@ func newWorkspacesStartCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	return cmd
 }
 
 func newWorkspacesStopCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "stop [workspace-id]",
+		Use:   "stop",
 		Short: "Stop a running workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -489,6 +535,7 @@ func newWorkspacesStopCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
 	return cmd
 }
@@ -496,9 +543,9 @@ func newWorkspacesStopCmd() *cobra.Command {
 func newWorkspacesRenameCmd() *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
-		Use:   "rename [workspace-id] --name <new-name>",
+		Use:   "rename --workspace-id <workspace-id> --name <new-name>",
 		Short: "Rename a workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			name = strings.TrimSpace(name)
@@ -508,7 +555,7 @@ func newWorkspacesRenameCmd() *cobra.Command {
 			if err := validateWorkspaceName(name); err != nil {
 				return err
 			}
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -524,6 +571,7 @@ func newWorkspacesRenameCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "New workspace name")
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	return cmd
 }
 
@@ -533,15 +581,15 @@ func newWorkspacesDeletionProtectionCmd() *cobra.Command {
 		disable bool
 	)
 	cmd := &cobra.Command{
-		Use:   "deletion-protection [workspace-id]",
+		Use:   "deletion-protection",
 		Short: "Enable or disable deletion protection",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			if enable == disable {
 				return fmt.Errorf("specify exactly one of --enable or --disable")
 			}
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -562,7 +610,7 @@ func newWorkspacesDeletionProtectionCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&enable, "enable", false, "Enable deletion protection")
 	cmd.Flags().BoolVar(&disable, "disable", false, "Disable deletion protection")
-	cmd.Flags().String("workspace-id", "", "Workspace ID (or pass it positionally)")
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 	return cmd
 }
@@ -575,9 +623,9 @@ func newWorkspacesComputeSettingsCmd() *cobra.Command {
 		serviceType    string
 	)
 	cmd := &cobra.Command{
-		Use:   "compute-settings [workspace-id]",
+		Use:   "compute-settings",
 		Short: "Modify workspace autoscaling and suspend settings",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			changedMin := cmd.Flags().Changed("min-cu")
@@ -591,7 +639,7 @@ func newWorkspacesComputeSettingsCmd() *cobra.Command {
 					return err
 				}
 			}
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -637,15 +685,16 @@ func newWorkspacesComputeSettingsCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&maxCU, "max-cu", 0, "Maximum compute units (0.25-32, at most 8x --min-cu, unchanged when omitted)")
 	cmd.Flags().IntVar(&suspendTimeout, "suspend-timeout", 0, "Auto-suspend timeout in seconds (-1 never suspends)")
 	cmd.Flags().StringVar(&serviceType, "service-type", "", "Compute service type")
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	return cmd
 }
 
 func newWorkspacesSettingsCmd() *cobra.Command {
 	var retentionHours int
 	cmd := &cobra.Command{
-		Use:   "settings [workspace-id]",
+		Use:   "settings",
 		Short: "Modify workspace-level settings",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			// The only setting here is required by the request model, so an
@@ -657,7 +706,7 @@ func newWorkspacesSettingsCmd() *cobra.Command {
 				return fmt.Errorf("--history-retention-hours must be between %d and %d, got %d",
 					minRetentionHours, maxRetentionHours, retentionHours)
 			}
-			workspaceID, err := workspaceIDFromArgs(cmd, args)
+			workspaceID, err := workspaceIDFromFlag(cmd)
 			if err != nil {
 				return err
 			}
@@ -675,13 +724,27 @@ func newWorkspacesSettingsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&retentionHours, "history-retention-hours", 0, "Point-in-time history retention in hours (1-720)")
+	cmd.Flags().String("workspace-id", "", "Workspace ID")
 	return cmd
 }
 
 func newWorkspacesOverviewCmd() *cobra.Command {
+	type overviewOutput struct {
+		Region         string `json:"Region" yaml:"Region"`
+		EngineType     string `json:"EngineType" yaml:"EngineType"`
+		WorkspaceTotal int    `json:"WorkspaceTotal" yaml:"WorkspaceTotal"`
+		RunningTotal   int    `json:"RunningTotal" yaml:"RunningTotal"`
+		CreatingTotal  int    `json:"CreatingTotal" yaml:"CreatingTotal"`
+		UpdatingTotal  int    `json:"UpdatingTotal" yaml:"UpdatingTotal"`
+		StoppedTotal   int    `json:"StoppedTotal" yaml:"StoppedTotal"`
+		SuspendedTotal int    `json:"SuspendedTotal" yaml:"SuspendedTotal"`
+		ClosedTotal    int    `json:"ClosedTotal" yaml:"ClosedTotal"`
+		ErrorTotal     int    `json:"ErrorTotal" yaml:"ErrorTotal"`
+	}
 	cmd := &cobra.Command{
 		Use:   "overview",
 		Short: "Show PostgreSQL workspace status counts",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g := fromCtx(cmd)
 			client, err := g.NewVolcClient(cmd.Context())
@@ -692,8 +755,30 @@ func newWorkspacesOverviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return g.Writer().WriteList(result.Overviews, []string{
-				"EngineType", "WorkspaceTotal", "RunningTotal", "CreatingTotal",
+			region := g.Region
+			if region == "" {
+				config, configErr := volcengine.ResolveConfig(cmd.Context())
+				if configErr == nil {
+					region = config.Region
+				}
+			}
+			overviews := make([]overviewOutput, 0, len(result.Overviews))
+			for _, overview := range result.Overviews {
+				overviews = append(overviews, overviewOutput{
+					Region:         region,
+					EngineType:     overview.EngineType,
+					WorkspaceTotal: overview.WorkspaceTotal,
+					RunningTotal:   overview.RunningTotal,
+					CreatingTotal:  overview.CreatingTotal,
+					UpdatingTotal:  overview.UpdatingTotal,
+					StoppedTotal:   overview.StoppedTotal,
+					SuspendedTotal: overview.SuspendedTotal,
+					ClosedTotal:    overview.ClosedTotal,
+					ErrorTotal:     overview.ErrorTotal,
+				})
+			}
+			return g.Writer().WriteList(overviews, []string{
+				"Region", "EngineType", "WorkspaceTotal", "RunningTotal", "CreatingTotal",
 				"UpdatingTotal", "StoppedTotal", "SuspendedTotal", "ClosedTotal", "ErrorTotal",
 			})
 		},

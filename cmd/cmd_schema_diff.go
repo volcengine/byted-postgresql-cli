@@ -25,41 +25,61 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/volcengine/byted-postgresql-cli/internal/volcengine"
 )
 
 func newSchemaDiffCmd(ctx ProviderContext) *cobra.Command {
-	var workspaceID string
-	cmd := &cobra.Command{Use: "schema-diff", Short: "Inspect PostgreSQL schema diff jobs"}
-	cmd.PersistentFlags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
-
-	resolveClient := func(cmd *cobra.Command) (*volcengine.Client, error) {
-		return fromCtx(cmd).NewVolcClient(cmd.Context())
+	cmd := &cobra.Command{
+		Use:     "schema-diff",
+		Short:   "Inspect PostgreSQL schema diff jobs",
+		Long:    "Check schema diff jobs with `status`, retrieve SQL with `result`, or get a download URL with `download`.",
+		Example: "byted-postgresql-cli schema-diff status --workspace-id ws-xxx --job-id job-xxx --json",
 	}
 
 	status := &cobra.Command{
-		Use: "status <job-id>", Short: "Show schema diff job status", Args: cobra.ExactArgs(1),
+		Use: "status --job-id <job-id>", Short: "Show schema diff job status", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := resolveClient(cmd)
+			workspaceID, err := cmd.Flags().GetString("workspace-id")
 			if err != nil {
 				return err
 			}
-			result, err := client.DescribeSchemaDiffJobStatus(cmd.Context(), workspaceID, args[0])
+			jobID, err := cmd.Flags().GetString("job-id")
+			if err != nil || jobID == "" {
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("--job-id is required")
+			}
+			client, err := fromCtx(cmd).NewVolcClient(cmd.Context())
+			if err != nil {
+				return err
+			}
+			result, err := client.DescribeSchemaDiffJobStatus(cmd.Context(), workspaceID, jobID)
 			if err != nil {
 				return err
 			}
 			return fromCtx(cmd).Writer().WriteItem(result, nil)
 		},
 	}
+	status.Flags().String("job-id", "", "Schema diff job ID (required)")
 	result := &cobra.Command{
-		Use: "result <job-id>", Short: "Show schema diff migration SQL", Args: cobra.ExactArgs(1),
+		Use: "result --job-id <job-id>", Short: "Show schema diff migration SQL", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := resolveClient(cmd)
+			workspaceID, err := cmd.Flags().GetString("workspace-id")
 			if err != nil {
 				return err
 			}
-			sqlText, err := client.DescribeSchemaDiffResultSQLAll(cmd.Context(), workspaceID, args[0])
+			jobID, err := cmd.Flags().GetString("job-id")
+			if err != nil || jobID == "" {
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("--job-id is required")
+			}
+			client, err := fromCtx(cmd).NewVolcClient(cmd.Context())
+			if err != nil {
+				return err
+			}
+			sqlText, err := client.DescribeSchemaDiffResultSQLAll(cmd.Context(), workspaceID, jobID)
 			if err != nil {
 				return err
 			}
@@ -67,20 +87,36 @@ func newSchemaDiffCmd(ctx ProviderContext) *cobra.Command {
 			return nil
 		},
 	}
+	result.Flags().String("job-id", "", "Schema diff job ID (required)")
 	download := &cobra.Command{
-		Use: "download <job-id>", Short: "Get schema diff result download URL", Args: cobra.ExactArgs(1),
+		Use: "download --job-id <job-id>", Short: "Get schema diff result download URL", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := resolveClient(cmd)
+			workspaceID, err := cmd.Flags().GetString("workspace-id")
 			if err != nil {
 				return err
 			}
-			link, err := client.GetSchemaDiffDownloadLink(cmd.Context(), workspaceID, args[0])
+			jobID, err := cmd.Flags().GetString("job-id")
+			if err != nil || jobID == "" {
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("--job-id is required")
+			}
+			client, err := fromCtx(cmd).NewVolcClient(cmd.Context())
+			if err != nil {
+				return err
+			}
+			link, err := client.GetSchemaDiffDownloadLink(cmd.Context(), workspaceID, jobID)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), link)
 			return nil
 		},
+	}
+	download.Flags().String("job-id", "", "Schema diff job ID (required)")
+	for _, child := range []*cobra.Command{status, result, download} {
+		child.Flags().String("workspace-id", "", "Workspace ID (required)")
 	}
 	cmd.AddCommand(status, result, download)
 	return cmd

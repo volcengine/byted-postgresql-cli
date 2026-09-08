@@ -85,6 +85,37 @@ func TestWriteListNormalizesNilSliceToEmptyYAMLArray(t *testing.T) {
 	}
 }
 
+func TestWriteListYAMLHandlesNilPointersAndUnexportedFields(t *testing.T) {
+	type item struct {
+		ID     string `json:"id"`
+		Detail *struct {
+			Name string `json:"name"`
+		} `json:"detail"`
+		hidden string
+	}
+	var output strings.Builder
+	writer := &Writer{Format: FormatYAML, Out: &output}
+	if err := writer.WriteList([]item{{ID: "one"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "id: one") || strings.Contains(output.String(), "hidden") {
+		t.Fatalf("YAML output = %q", output.String())
+	}
+}
+
+func TestWriteListTableHandlesNilPointerItem(t *testing.T) {
+	var output strings.Builder
+	writer := &Writer{Format: FormatTable, Out: &output}
+	var item *struct {
+		ID string `json:"id"`
+	}
+	if err := writer.WriteList([]*struct {
+		ID string `json:"id"`
+	}{item}, []string{"ID"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWriteYAMLPreservesIntegerValues(t *testing.T) {
 	item := struct {
 		DataSizeUsedBytes int64 `json:"DataSizeUsedBytes"`

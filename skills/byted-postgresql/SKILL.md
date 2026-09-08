@@ -1,6 +1,6 @@
 ---
 name: byted-postgresql
-description: Use the Volcengine PostgreSQL CLI for Volcengine PostgreSQL workspace, branch, compute, database, role, endpoint, MCP, psql, and pg_dump workflows, including authentication, resource inspection, schema operations, and data-plane access.
+description: 火山引擎 PostgreSQL CLI. 支持管理 AIDAP PostgresSQL 项目、工作空间、分支、计算资源、数据库、角色、终端节点、网络与标签管理，并提供 SQL 查询、Schema Diff、MCP、psql、pg_dump 和数据库诊断功能。
 ---
 
 # Byted PostgreSQL

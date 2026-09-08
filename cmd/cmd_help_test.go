@@ -24,7 +24,20 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+func TestFormatUseLineWrapsResourceFlags(t *testing.T) {
+	cmd := &cobra.Command{Use: "list --parent-branch-id <branch-id> --workspace-id <workspace-id>"}
+	cmd.DisableFlagsInUseLine = true
+	cmd.Flags().String("parent-branch-id", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	got := formatUseLine(cmd)
+	if !strings.Contains(got, " \\\n    --workspace-id") {
+		t.Fatalf("formatUseLine() = %q, want multiline resource flags", got)
+	}
+}
 
 func TestComputeHelpExplainsUnitsAndAP(t *testing.T) {
 	computes := newComputesCmd(defaultProviderContext())
@@ -35,7 +48,7 @@ func TestComputeHelpExplainsUnitsAndAP(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := output.String()
-	for _, want := range []string{"compute units (0.25-32)", "at most 8x --min-cu"} {
+	for _, want := range []string{"compute units (0.25-2)", "Compute type: ReadOnly or Analytic (DuckDB)"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("compute help missing %q:\n%s", want, help)
 		}

@@ -58,14 +58,14 @@ func TestLifecycleCommandsAreRegistered(t *testing.T) {
 
 func TestDeletionProtectionCommandRequiresExactlyOneDirection(t *testing.T) {
 	cmd := newWorkspacesDeletionProtectionCmd()
-	cmd.SetArgs([]string{"ws-1"})
+	cmd.SetArgs([]string{"--workspace-id", "ws-1"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "exactly one of --enable or --disable") {
 		t.Fatalf("missing direction error = %v", err)
 	}
 
 	cmd = newWorkspacesDeletionProtectionCmd()
-	cmd.SetArgs([]string{"ws-1", "--enable", "--disable"})
+	cmd.SetArgs([]string{"--workspace-id", "ws-1", "--enable", "--disable"})
 	err = cmd.Execute()
 	if err == nil {
 		t.Fatal("expected mutually exclusive direction flags to fail")
@@ -79,14 +79,14 @@ func TestRestoreWindowCommandRequiresBranchID(t *testing.T) {
 	})
 	cmd.SetArgs(nil)
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
+	if err == nil || !strings.Contains(err.Error(), "--branch-id is required") {
 		t.Fatalf("missing branch id error = %v", err)
 	}
 }
 
 func TestResetPasswordCommandRequiresRoleAndPassword(t *testing.T) {
 	cmd := newRolesCmd(defaultProviderContext())
-	cmd.SetArgs([]string{"reset-password", "user_admin"})
+	cmd.SetArgs([]string{"reset-password", "--name", "user_admin"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "required flag") {
 		t.Fatalf("missing password error = %v", err)
@@ -95,7 +95,7 @@ func TestResetPasswordCommandRequiresRoleAndPassword(t *testing.T) {
 	cmd = newRolesCmd(defaultProviderContext())
 	cmd.SetArgs([]string{"reset-password", "--password", "secret"})
 	err = cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
-		t.Fatalf("missing role error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "--name is required") {
+		t.Fatalf("missing role name error = %v", err)
 	}
 }
